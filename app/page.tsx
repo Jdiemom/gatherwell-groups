@@ -24,14 +24,17 @@ const FEATURES = [
 
 const PLANS = [
   {
+    id: "solo",
     name: "Solo Organizer", price: "$19", per: "For the one brave friend planning it all", pop: false,
     items: ["Full 9-step guided method", "1 active group · up to 8 travelers", "All polls & surveys", "Budget spreadsheet + itinerary outputs"],
   },
   {
+    id: "group",
     name: "Group", price: "$29", per: "One subscription covers the whole group", pop: true,
     items: ["Everything in Solo Organizer", "Unlimited travelers, 3 active trips", "Flight buying-window alerts", "Partner booking perks & support", "Split-pay tracking & reminders"],
   },
   {
+    id: "concierge",
     name: "Concierge", price: "$79", per: "We check your work at every step", pop: false,
     items: ["Everything in Group", "Advisor review of each step", "Priority support, 1 business day", "Custom negotiated group rates", "Upgrade path to Full Service"],
   },
@@ -51,12 +54,13 @@ export default function Home() {
             <a href="#savings">Your Savings</a>
             <a href="#pricing">Pricing</a>
             <a href="#fullservice">Full Service</a>
-            <a className="btn btn-primary btn-sm" href="#waitlist">Join the Waitlist</a>
+            <a href="/login">Sign In</a>
+            <a className="btn btn-primary btn-sm" href="#pricing">Start Your Group</a>
           </div>
         </div>
       </nav>
 
-      <header className="hero" id="top">
+      <header className="hero hero-photo" id="top">
         <div className="hero-inner">
           <div className="eyebrow">A Gatherwell Travel Company</div>
           <h1>
@@ -70,7 +74,7 @@ export default function Home() {
             money a big group usually wastes.
           </p>
           <div className="hero-ctas">
-            <a className="btn btn-primary" href="#waitlist">Join the Waitlist</a>
+            <a className="btn btn-primary" href="#pricing">Start Your Group Trip</a>
             <a className="btn btn-light" href="#savings">See What You&apos;d Save</a>
           </div>
           <div className="hero-stats">
@@ -141,8 +145,8 @@ export default function Home() {
           <div className="eyebrow">Pricing</div>
           <h2 className="sec-title">Subscribe while you plan. Cancel when you&apos;re booked.</h2>
           <p className="sec-sub">
-            Launching soon. Join the waitlist and you&apos;ll get founding-member pricing when we
-            open the doors.
+            One subscription covers your whole group. Travelers join free with an invite link;
+            only the organizer subscribes.
           </p>
           <div className="plans">
             {PLANS.map((p) => (
@@ -159,8 +163,8 @@ export default function Home() {
                     <li key={it}>{it}</li>
                   ))}
                 </ul>
-                <a className={`btn ${p.pop ? "btn-primary" : "btn-outline"}`} href="#waitlist">
-                  Join the Waitlist
+                <a className={`btn ${p.pop ? "btn-primary" : "btn-outline"}`} href={`/api/stripe/checkout?plan=${p.id}`}>
+                  Choose {p.name}
                 </a>
               </div>
             ))}

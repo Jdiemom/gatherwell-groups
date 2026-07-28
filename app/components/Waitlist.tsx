@@ -30,11 +30,11 @@ export default function Waitlist() {
   return (
     <section className="waitlist" id="waitlist">
       <div className="wrap center">
-        <div className="eyebrow">Launching Soon</div>
-        <h2 className="sec-title">Be first in line (and lock founding-member pricing)</h2>
+        <div className="eyebrow">Not Ready Yet?</div>
+        <h2 className="sec-title">Trip still a daydream? Stay in the loop.</h2>
         <p className="sec-sub">
-          Tell us a little about your next group trip and we&apos;ll invite you as soon as doors
-          open. Early members get their first month free.
+          If your group isn&apos;t ready to start planning, leave your email and we&apos;ll send
+          occasional group-travel savings tips and the nudge you need when it&apos;s time.
         </p>
         {status === "done" ? (
           <div className="wl-card card">
