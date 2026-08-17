@@ -5,7 +5,7 @@ import { useState } from "react";
 const fmt = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
 function calcSavings(size: number, airfare: number, style: string) {
-  const feePP = style === "lux" ? 100 : style === "intl" ? 60 : 40;
+  const feePP = 100; // Gatherwell Travel's full-service planning fee per traveler (USD)
   const advisorFees = size * feePP;
   const flightPct = style === "domestic" ? 0.15 : 0.12;
   const flightSave = size * airfare * flightPct;
@@ -81,7 +81,8 @@ export default function Calculator() {
                 <span className="t">Advisor planning fees you skip</span>
                 <span className="v">{fmt(r.advisorFees)}</span>
                 <span className="d">
-                  Custom group trips commonly carry $25–$100+ planning fees per traveler.
+                  Full-service planning, including our own Gatherwell Travel advisory, runs about
+                  $100 USD per traveler on custom group trips.
                 </span>
               </div>
               <div className="sav-row">
@@ -109,8 +110,9 @@ export default function Calculator() {
               </div>
             </div>
             <div className="foot-note">
-              *Estimates. Advisor planning fees commonly run $25–$100+ per person for custom group
-              trips (
+              *Estimates. The advisor-fee figure reflects Gatherwell Travel&apos;s own full-service
+              planning fee of about $100 USD per traveler; industry fees commonly run $25–$100+ per
+              person for custom group trips (
               <a
                 href="https://hostagencyreviews.com/blog/travel-agents-guide-to-charging-fees"
                 target="_blank"
