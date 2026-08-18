@@ -98,7 +98,7 @@ export default function Dashboard({ email, groups, hasActiveSub, plan }: {
             <div className="card group-row">
               <div>
                 <div style={{ fontWeight: 700, fontSize: 17 }}>{g.name}</div>
-                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                <div style={{ fontSize: 14.5, color: "var(--ink-soft)" }}>
                   {g.role === "organizer" ? "You're the organizer" : "Member"}
                   {g.trip_type ? ` · ${g.trip_type}` : ""}
                 </div>

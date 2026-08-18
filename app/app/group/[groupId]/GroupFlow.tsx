@@ -117,7 +117,7 @@ export default function GroupFlow(props: {
     const max = Math.max(...poll.options.map((o) => poll.votes.filter((v) => v.option_id === o.id).length), 0);
     return (
       <div key={poll.id} style={{ marginBottom: 26 }}>
-        <h3 style={{ fontSize: 17, marginBottom: 10 }}>{poll.question}</h3>
+        <h3 style={{ fontSize: 18, marginBottom: 10 }}>{poll.question}</h3>
         {poll.options.map((o) => {
           const count = poll.votes.filter((v) => v.option_id === o.id).length;
           const win = total > 0 && count === max && max > 0;
@@ -179,7 +179,7 @@ export default function GroupFlow(props: {
           <>
             {header(1)}
             <p className="lead">Trips die from soft commitments. Get real names in, then set a commitment device before anyone books anything.</p>
-            <h3 style={{ fontSize: 17, marginBottom: 6 }}>Your travelers ({members.length})</h3>
+            <h3 style={{ fontSize: 18, marginBottom: 6 }}>Your travelers ({members.length})</h3>
             <div className="member-chips">
               {members.map((m, i) => (
                 <span key={m.user_id} className={`chip ${m.user_id === userId ? "you" : ""}`}>
@@ -493,7 +493,7 @@ members.map((m) => `"${m.name}","$446","$1,336","60 days before departure"`).joi
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <button className="close" onClick={() => setContactOpen(false)}>×</button>
             <h3>Talk to a real person</h3>
-            <p style={{ color: "var(--ink-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+            <p style={{ color: "var(--ink-soft)", fontSize: 16, lineHeight: 1.7 }}>
               The Gatherwell Travel advisory team is behind every step. Hand us one decision or
               the whole trip.
             </p>

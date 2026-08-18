@@ -246,7 +246,7 @@ export default function Home() {
               >
                 Schedule a Consultation
               </a>
-              <p style={{ fontSize: "12.5px", marginTop: 14, color: "rgba(255,255,255,.65)" }}>
+              <p style={{ fontSize: "14px", marginTop: 14, color: "rgba(255,255,255,.78)" }}>
                 The membership is for saving money.
                 <br />
                 Full Service is for saving time.
@@ -277,7 +277,7 @@ export default function Home() {
                 <br />
                 <a href="tel:+18886643090">(888) 664-3090</a>
                 <br />
-                <span style={{ fontSize: 12, color: "rgba(255,255,255,.5)" }}>Call or text, we answer both.</span>
+                <span style={{ fontSize: 13.5, color: "rgba(255,255,255,.65)" }}>Call or text, we answer both.</span>
               </p>
             </div>
             <div>
