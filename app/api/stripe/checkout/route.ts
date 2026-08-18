@@ -37,8 +37,30 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("checkout failed:", message);
+
+    const key = process.env.STRIPE_SECRET_KEY || "";
+    const keyMode = key.startsWith("sk_test_") ? "test"
+      : key.startsWith("sk_live_") ? "LIVE"
+      : key.startsWith("rk_") ? "restricted"
+      : key ? "unrecognized" : "missing";
+    let keyIsLiveMode: boolean | null = null;
+    try {
+      const stripe2 = stripeClient();
+      if (stripe2) keyIsLiveMode = (await stripe2.balance.retrieve()).livemode;
+    } catch { /* ignore */ }
+
     return NextResponse.json(
-      { error: "Checkout could not start.", reason: message },
+      {
+        error: "Checkout could not start.",
+        reason: message,
+        diagnostics: {
+          key_type: keyMode,
+          key_label: key.slice(0, 8),
+          key_length: key.length,
+          key_reaches_live_mode: keyIsLiveMode,
+          price_attempted: PLAN_PRICES[plan] ?? null,
+        },
+      },
       { status: 500 }
     );
   }
