@@ -28,7 +28,8 @@ export default function GroupFlow(props: {
     return 9;
   });
   const [toast, setToast] = useState("");
-  const [modal, setModal] = useState<{ title: string; body: string; fname: string } | null>(null);
+  const [modal, setModal] = useState<{ title: string; body: string; fname: string; fdata?: string } | null>(null);
+  const [contactOpen, setContactOpen] = useState(false);
 
   const nextStep = useMemo(() => {
     for (let i = 1; i <= 9; i++) if (!completed.has(i)) return i;
@@ -98,7 +99,8 @@ export default function GroupFlow(props: {
 
   function download(name: string, body: string) {
     try {
-      const blob = new Blob([body], { type: "text/plain" });
+      const type = name.endsWith(".csv") ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8";
+      const blob = new Blob([body], { type });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = name;
@@ -235,24 +237,42 @@ export default function GroupFlow(props: {
             <div className="callout teal">
               <b>Track it in the Gatherwell Budgeting app</b>
               Once adopted, your budget becomes the yardstick for every later choice.
+              <div style={{ marginTop: 12 }}>
+                <a
+                  className="btn btn-sage btn-sm"
+                  href="https://apps.apple.com/us/app/gatherwell-travel/id6762874183"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Get the Budgeting App
+                </a>
+              </div>
             </div>
             <div className="step-actions">
               {completeBtn(4, "Adopt Budget →", true, "Budget set. Advisor fee avoided: ~$40/person.")}
-              <button className="btn btn-outline btn-sm" onClick={() => setModal({
-                title: "Group Budget: spreadsheet output",
-                fname: "Group-Budget.csv",
-                body:
+              <button className="btn btn-outline btn-sm" onClick={() => {
+                const rows: [string, number][] = [
+                  ["Flights", 600],
+                  ["Accommodation", 480],
+                  ["Activities", 240],
+                  ["Food & local", 300],
+                  ["Buffer (10%)", 162],
+                  ["TOTAL", 1782],
+                ];
+                setModal({
+                  title: "Group Budget",
+                  fname: "Group-Budget.csv",
+                  body:
 `GROUP BUDGET · ${group.name}
 Travelers: ${members.length}
 
-Category,Per Person,Group Total
-Flights,$600,${fmt(600 * members.length)}
-Accommodation,$480,${fmt(480 * members.length)}
-Activities,$240,${fmt(240 * members.length)}
-Food & local,$300,${fmt(300 * members.length)}
-Buffer (10%),$162,${fmt(162 * members.length)}
-TOTAL,"$1,782",${fmt(1782 * members.length)}`,
-              })}>Preview budget spreadsheet</button>
+${"Category".padEnd(16)}${"Per Person".padEnd(13)}Group Total
+${rows.map(([c, v]) => c.padEnd(16) + fmt(v).padEnd(13) + fmt(v * members.length)).join("\n")}`,
+                  fdata:
+`Category,Per Person,Group Total\n` +
+rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * members.length)}"`).join("\n"),
+                });
+              }}>Preview budget spreadsheet</button>
             </div>
           </>
         );
@@ -290,12 +310,12 @@ TOTAL,"$1,782",${fmt(1782 * members.length)}`,
             <div className="partner-card">
               <div className="lg" style={{ background: "#4A3F35" }}>G</div>
               <div><h4>Have Gatherwell ticket the group <span className="badge">Upgrade</span></h4><p>Our advisors hold group space and ticket everyone together. Ideal for 10+.</p></div>
-              <a className="btn btn-outline btn-sm" href="https://gatherwelltravel.com" target="_blank" rel="noopener noreferrer">Ask us</a>
+              <button className="btn btn-outline btn-sm" onClick={() => setContactOpen(true)}>Ask us</button>
             </div>
             <div className="step-actions">
               {completeBtn(6, "Flights Planned. Complete Step →", true, `Estimated ${fmt(Math.round(members.length * 600 * 0.12))} kept by buying in the window.`)}
               <button className="btn btn-outline btn-sm" onClick={() => setModal({
-                title: "Flight Plan: PDF output",
+                title: "Flight Plan",
                 fname: "Flight-Plan.txt",
                 body:
 `FLIGHT PLAN · ${group.name}
@@ -316,7 +336,7 @@ BOOKING PATH
         return (
           <>
             {header(7)}
-            <p className="lead">One house changes a group trip&apos;s chemistry. Compare true per-person cost, then book through partners with real humans behind them.</p>
+            <p className="lead">One house changes a group trip&apos;s chemistry. Compare true per-person cost, then book through our partners.</p>
             {stepPolls(7)}
             <div className="partner-card">
               <div className="lg" style={{ background: "#0E9488" }}>R</div>
@@ -355,7 +375,7 @@ BOOKING PATH
             <div className="step-actions" style={{ marginTop: 22 }}>
               {completeBtn(9, done ? "Trip Planned 🎉" : "Generate Final Outputs →", true, "Trip complete! 🎉 Pause your subscription until the next adventure.")}
               <button className="btn btn-outline btn-sm" onClick={() => setModal({
-                title: "Master Itinerary: output",
+                title: "Master Itinerary",
                 fname: "Master-Itinerary.txt",
                 body:
 `${group.name.toUpperCase()} · MASTER ITINERARY
@@ -372,13 +392,16 @@ Booked through: Expedia · GetYourGuide · Rental Escapes · Luxury Rentals
 Need a human? gatherwelltravel.com`,
               })}>Itinerary preview</button>
               <button className="btn btn-outline btn-sm" onClick={() => setModal({
-                title: "Payment Schedule: spreadsheet output",
+                title: "Payment Schedule",
                 fname: "Payment-Schedule.csv",
                 body:
 `PAYMENT SCHEDULE · ${group.name}
 
-Traveler,Deposit (25%),Balance,Balance Due
-${members.map((m) => `${m.name},$446,"$1,336",60 days before departure`).join("\n")}`,
+${"Traveler".padEnd(20)}${"Deposit (25%)".padEnd(16)}${"Balance".padEnd(11)}Balance Due
+${members.map((m) => m.name.padEnd(20) + "$446".padEnd(16) + "$1,336".padEnd(11) + "60 days before departure").join("\n")}`,
+                fdata:
+`Traveler,Deposit (25%),Balance,Balance Due\n` +
+members.map((m) => `"${m.name}","$446","$1,336","60 days before departure"`).join("\n"),
               })}>Payment schedule</button>
             </div>
             {done && (
@@ -404,7 +427,7 @@ ${members.map((m) => `${m.name},$446,"$1,336",60 days before departure`).join("\
           <span className="pill">{group.name}</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
             <button className="btn btn-sage btn-sm" onClick={copyInvite}>Invite travelers</button>
-            <a className="btn btn-ghost btn-sm" href="https://gatherwelltravel.com" target="_blank" rel="noopener noreferrer">Need a human?</a>
+            <button className="btn btn-ghost btn-sm" onClick={() => setContactOpen(true)}>Need a human?</button>
             <Link className="btn btn-outline btn-sm" href="/app">All trips</Link>
           </div>
         </div>
@@ -412,7 +435,7 @@ ${members.map((m) => `${m.name},$446,"$1,336",60 days before departure`).join("\
 
       <div className="app-main">
         <div className="savings-live">
-          <span style={{ fontSize: 22 }}>🪙</span>
+          <svg className="ic" viewBox="0 0 24 24" aria-hidden><ellipse cx="12" cy="6.5" rx="7" ry="3" /><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5" /><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5" /></svg>
           <div>
             <div className="amt">{fmt(savings)}</div>
             <div className="lbl">estimated savings your group has locked in so far. Updates as you complete steps.</div>
@@ -458,9 +481,54 @@ ${members.map((m) => `${m.name},$446,"$1,336",60 days before departure`).join("\
             <pre>{modal.body}</pre>
             {modal.fname && (
               <div className="step-actions">
-                <button className="btn btn-primary btn-sm" onClick={() => download(modal.fname, modal.body)}>Download file</button>
+                <button className="btn btn-primary btn-sm" onClick={() => download(modal.fname, modal.fdata ?? modal.body)}>Download file</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {contactOpen && (
+        <div className="modal-bg" onClick={() => setContactOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close" onClick={() => setContactOpen(false)}>×</button>
+            <h3>Talk to a real person</h3>
+            <p style={{ color: "var(--ink-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+              The Gatherwell Travel advisory team is behind every step. Hand us one decision or
+              the whole trip.
+            </p>
+            <a className="contact-row" href="mailto:hello@gatherwelltravel.com">
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden>
+                <rect x="3.5" y="5.5" width="17" height="13" />
+                <path d="M4 6.5l8 6.5 8-6.5" />
+              </svg>
+              <span>
+                <span className="cr-title">Email us</span>
+                <br />
+                <span className="cr-sub">hello@gatherwelltravel.com</span>
+              </span>
+            </a>
+            <a className="contact-row" href="tel:+18886643090">
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden>
+                <path d="M5 4.5h4l1.5 4.5-2.2 1.8a13 13 0 0 0 5 5l1.8-2.2 4.4 1.5v4a1.5 1.5 0 0 1-1.6 1.4A16.5 16.5 0 0 1 3.6 6.1 1.5 1.5 0 0 1 5 4.5z" />
+              </svg>
+              <span>
+                <span className="cr-title">Call us</span>
+                <br />
+                <span className="cr-sub">(888) 664-3090</span>
+              </span>
+            </a>
+            <a className="contact-row" href="sms:+18886643090">
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden>
+                <path d="M4 5.5h16v11H9l-4.5 3.5V5.5z" />
+                <path d="M8 9.5h8M8 12.5h5" />
+              </svg>
+              <span>
+                <span className="cr-title">Text us</span>
+                <br />
+                <span className="cr-sub">Same number: (888) 664-3090</span>
+              </span>
+            </a>
           </div>
         </div>
       )}

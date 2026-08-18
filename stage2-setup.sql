@@ -161,3 +161,23 @@ alter table public.subscriptions enable row level security;
 create policy "read own subscription" on public.subscriptions
   for select using (auth.uid() = user_id);
 -- all writes via service role (bypasses RLS)
+
+-- ============ hotfixes applied in production (Jul 28, 2026) ============
+-- Link members to profiles so the travelers list can show them.
+do $$ begin
+  alter table public.group_members
+    add constraint group_members_user_id_profiles_fkey
+    foreign key (user_id) references public.profiles(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+
+-- Let members of the same group see each other's names.
+do $$ begin
+  create policy "groupmates read profiles" on public.profiles
+    for select using (
+      exists (
+        select 1 from public.group_members me
+        join public.group_members them on me.group_id = them.group_id
+        where me.user_id = auth.uid() and them.user_id = profiles.id
+      )
+    );
+exception when duplicate_object then null; end $$;

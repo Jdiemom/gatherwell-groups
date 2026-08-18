@@ -33,10 +33,10 @@ export default function Calculator() {
       <div className="wrap">
         <div className="center">
           <div className="eyebrow">The Math</div>
-          <h2 className="sec-title">Where a group loses money without noticing</h2>
+          <h2 className="sec-title">Where a group loses money</h2>
           <p className="sec-sub">
-            Move the sliders. This is what a group your size typically hands away without
-            noticing, and what our subscription costs instead.
+            Move the sliders. This is what a group your size typically hands away, and what our
+            subscription costs instead.
           </p>
         </div>
         <div className="sav-grid">
@@ -71,7 +71,7 @@ export default function Calculator() {
             <div className="sav-total">
               <div className="amt">{fmt(r.total)}</div>
               <div className="cap">
-                estimated money your group keeps by planning with Groups by Gatherwell
+                estimated money your group keeps
               </div>
             </div>
           </div>
@@ -81,16 +81,14 @@ export default function Calculator() {
                 <span className="t">Advisor planning fees you skip</span>
                 <span className="v">{fmt(r.advisorFees)}</span>
                 <span className="d">
-                  Full-service planning, including our own Gatherwell Travel advisory, runs about
-                  $100 USD per traveler on custom group trips.
+                  Full-service planning runs about $100 per traveler on custom group trips.
                 </span>
               </div>
               <div className="sav-row">
                 <span className="t">Flights bought in the right window</span>
                 <span className="v">{fmt(r.flightSave)}</span>
                 <span className="d">
-                  Booking domestic trips 1–3 months out has averaged ~25% below peak fares. We
-                  assume a conservative slice of that.
+                  Booking domestic trips 1–3 months out has averaged ~25% below peak fares.
                 </span>
               </div>
               <div className="sav-row">
@@ -129,8 +127,7 @@ export default function Calculator() {
               >
                 Forbes Advisor
               </a>
-              ). Airfare timing is never guaranteed. We show you the data and the window, not a
-              promise.
+              ). Airfare timing is never guaranteed.
             </div>
           </div>
         </div>

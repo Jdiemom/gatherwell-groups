@@ -34,15 +34,14 @@ export default function Waitlist() {
         <h2 className="sec-title">Trip still a daydream? Stay in the loop.</h2>
         <p className="sec-sub">
           If your group isn&apos;t ready to start planning, leave your email and we&apos;ll send
-          occasional group-travel savings tips and the nudge you need when it&apos;s time.
+          occasional group-travel savings tips.
         </p>
         {status === "done" ? (
           <div className="wl-card card">
             <div className="wl-success">
               <b>You&apos;re on the list! 🎉</b>
               <br />
-              Watch your inbox. We&apos;ll invite you in as soon as Groups by Gatherwell opens,
-              with your founding-member perks attached.
+              Watch your inbox. We&apos;ll be in touch.
             </div>
           </div>
         ) : (
@@ -85,7 +84,7 @@ export default function Waitlist() {
             </button>
             {status === "error" && <div className="wl-error">{error}</div>}
             <p className="foot-note" style={{ marginTop: 14 }}>
-              No spam, ever. One invite email plus occasional launch updates. Unsubscribe anytime.
+              No spam. Unsubscribe anytime.
             </p>
           </form>
         )}
