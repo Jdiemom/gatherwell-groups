@@ -26,7 +26,7 @@ export default async function GroupPage({ params }: { params: Promise<{ groupId:
     supabase.from("groups").select("*").eq("id", groupId).maybeSingle(),
     supabase.from("group_members").select("user_id, role, profiles:user_id(name, email)").eq("group_id", groupId),
     supabase.from("step_progress").select("step_n, data").eq("group_id", groupId),
-    supabase.from("polls").select("id, step_n, kind, question, poll_options(id, label, meta, sort), votes(option_id, user_id)").eq("group_id", groupId),
+    supabase.from("polls").select("id, step_n, kind, question, poll_options(id, label, meta, sort), votes(option_id, user_id), date_votes(option_id, user_id, answer)").eq("group_id", groupId),
   ]);
 
   if (!group) {
@@ -54,6 +54,7 @@ export default async function GroupPage({ params }: { params: Promise<{ groupId:
         id: p.id, step_n: p.step_n, kind: p.kind, question: p.question,
         options: [...(p.poll_options ?? [])].sort((a, b) => a.sort - b.sort),
         votes: p.votes ?? [],
+        dvotes: (p as unknown as { date_votes?: { option_id: string; user_id: string; answer: string }[] }).date_votes ?? [],
       }))}
     />
   );

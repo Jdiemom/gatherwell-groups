@@ -10,6 +10,7 @@ type Poll = {
   id: string; step_n: number; kind: string; question: string;
   options: { id: string; label: string; meta: string | null; sort: number }[];
   votes: { option_id: string; user_id: string }[];
+  dvotes?: { option_id: string; user_id: string; answer: string }[];
 };
 type Budget = { flights: number; stay: number; activities: number; food: number };
 type Group = {
@@ -48,6 +49,7 @@ export default function GroupFlow(props: {
   const [pollFormStep, setPollFormStep] = useState<number | null>(null);
   const [pfQ, setPfQ] = useState("");
   const [pfOpts, setPfOpts] = useState("");
+  const [pfKind, setPfKind] = useState<"choice" | "dates">("choice");
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [inviteTpl, setInviteTpl] = useState<string | null>(null);
@@ -96,6 +98,63 @@ export default function GroupFlow(props: {
       return { ...p, votes: [...others, { option_id: optionId, user_id: userId }] };
     }));
     say("Vote recorded.");
+
+    // If this vote was the last one missing, the step advances itself (verified server-side).
+    try {
+      const res = await fetch("/api/steps/auto-advance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId: group.id, stepN: poll.step_n }),
+      });
+      const out = await res.json().catch(() => null);
+      if (out?.advanced) {
+        setCompleted((c) => new Set([...c, poll.step_n]));
+        if (out.nextStep) setCurrent(out.nextStep);
+        say(out.nextStep
+          ? `Everyone voted! Step ${poll.step_n} locked in. Step ${out.nextStep} is open, and the group has been emailed.`
+          : `Everyone voted! Step ${poll.step_n} locked in.`);
+      }
+    } catch { /* auto-advance is best-effort; the organizer can always complete manually */ }
+  }
+
+  async function voteDate(poll: Poll, optionId: string, answer: "yes" | "no" | "maybe") {
+    if (completed.has(poll.step_n)) {
+      say("This decision is locked in. Ask your organizer to reopen the step if plans changed.");
+      return;
+    }
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("date_votes")
+      .upsert({ poll_id: poll.id, option_id: optionId, user_id: userId, answer });
+    if (error) { say("Answer didn't save. Try again."); return; }
+    setPolls((ps) => ps.map((p) => {
+      if (p.id !== poll.id) return p;
+      const others = (p.dvotes ?? []).filter((v) => !(v.user_id === userId && v.option_id === optionId));
+      return { ...p, dvotes: [...others, { option_id: optionId, user_id: userId, answer }] };
+    }));
+
+    try {
+      const res = await fetch("/api/steps/auto-advance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId: group.id, stepN: poll.step_n }),
+      });
+      const out = await res.json().catch(() => null);
+      if (out?.advanced) {
+        setCompleted((c) => new Set([...c, poll.step_n]));
+        if (out.nextStep) setCurrent(out.nextStep);
+        say(`Everyone answered! Step ${poll.step_n} locked in, and the group has been emailed the results.`);
+      }
+    } catch { /* best-effort */ }
+  }
+
+  function notifyStep(stepN: number, kind: "opened" | "reopened") {
+    // Fire and forget: email failures never block the UI.
+    fetch("/api/steps/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: group.id, stepN, kind }),
+    }).catch(() => {});
   }
 
   async function completeStep(n: number, msg?: string) {
@@ -106,8 +165,11 @@ export default function GroupFlow(props: {
       .upsert({ group_id: group.id, step_n: n, completed_by: userId });
     if (error) { say("Couldn't save progress. Try again."); return; }
     setCompleted((c) => new Set([...c, n]));
-    if (n < 9) setCurrent(n + 1);
-    say(msg || `Step ${n} complete. Step ${n + 1} unlocked!`);
+    if (n < 9) {
+      setCurrent(n + 1);
+      notifyStep(n + 1, "opened");
+    }
+    say(msg || `Step ${n} complete. Step ${n + 1} unlocked! Your group has been emailed.`);
   }
 
   /* ---------- budget: derived from the group's real vote, adjustable by the organizer ---------- */
@@ -156,7 +218,7 @@ export default function GroupFlow(props: {
     const supabase = supabaseBrowser();
     const { data: poll, error } = await supabase
       .from("polls")
-      .insert({ group_id: group.id, step_n: stepN, kind: "choice", question: q })
+      .insert({ group_id: group.id, step_n: stepN, kind: pfKind, question: q })
       .select("id")
       .single();
     if (error || !poll) { say("Couldn't create the poll. Try again."); return; }
@@ -167,10 +229,10 @@ export default function GroupFlow(props: {
       .select("id, label, meta, sort");
     if (e2 || !created) { say("Poll saved but its options failed. Remove it and try again."); return; }
     setPolls((ps) => [...ps, {
-      id: poll.id, step_n: stepN, kind: "choice", question: q,
-      options: [...created].sort((a, b) => a.sort - b.sort), votes: [],
+      id: poll.id, step_n: stepN, kind: pfKind, question: q,
+      options: [...created].sort((a, b) => a.sort - b.sort), votes: [], dvotes: [],
     }]);
-    setPfQ(""); setPfOpts(""); setPollFormStep(null);
+    setPfQ(""); setPfOpts(""); setPollFormStep(null); setPfKind("choice");
     say("Poll added. Your group can vote now.");
   }
 
@@ -198,7 +260,8 @@ export default function GroupFlow(props: {
       return next;
     });
     setCurrent(n);
-    say(`Step ${n} reopened. Voting is live again.`);
+    notifyStep(n, "reopened");
+    say(`Step ${n} reopened. Voting is live again, and your group has been emailed.`);
   }
 
   function inviteLink() {
@@ -275,8 +338,111 @@ ${link}`,
     } catch { say("Download blocked in this browser."); }
   }
 
+  /* ---------- the trip so far (sidebar) ---------- */
+  function tripShape() {
+    const items: { label: string; value: string; locked: boolean }[] = [];
+    const winnersOf = (n: number) =>
+      polls
+        .filter((p) => p.step_n === n)
+        .map((p) => {
+          if (p.kind === "dates") {
+            const dv = p.dvotes ?? [];
+            if (dv.length === 0) return null;
+            const scored = p.options.map((o) => ({
+              o,
+              yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").length,
+              maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").length,
+            }));
+            const best = scored.sort((a, b) => b.yes - a.yes || b.maybe - a.maybe)[0];
+            return best && best.yes + best.maybe > 0 ? best.o.label : null;
+          }
+          const counts = p.options.map((o) => ({ o, c: p.votes.filter((v) => v.option_id === o.id).length }));
+          const win = counts.sort((a, b) => b.c - a.c)[0];
+          return win && win.c > 0 ? win.o.label : null;
+        })
+        .filter((x): x is string => !!x);
+    const push = (label: string, n: number) => {
+      const w = winnersOf(n).slice(0, 2).join(" · ");
+      if (w) items.push({ label, value: w, locked: completed.has(n) });
+    };
+    push("Vision", 2);
+    push("Dates", 3);
+    if (budget || completed.has(4)) {
+      items.push({ label: "Budget", value: `${fmt(budgetTotal(budget ?? defaultBudget()))} per person`, locked: completed.has(4) });
+    }
+    push("Destination", 5);
+    push("Home base", 7);
+    push("Activities", 8);
+    return items;
+  }
+
   /* ---------- poll rendering ---------- */
+  function dateBlock(poll: Poll) {
+    const closed = completed.has(poll.step_n);
+    const dv = poll.dvotes ?? [];
+    const scored = poll.options.map((o) => ({
+      o,
+      yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").length,
+      maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").length,
+      no: dv.filter((v) => v.option_id === o.id && v.answer === "no").length,
+    }));
+    const best = [...scored].sort((a, b) => b.yes - a.yes || b.maybe - a.maybe || a.no - b.no)[0];
+    const answeredAll = members.filter((m) =>
+      poll.options.every((o) => dv.some((v) => v.user_id === m.user_id && v.option_id === o.id))
+    ).length;
+    return (
+      <div key={poll.id} style={{ marginBottom: 26 }}>
+        <h3 style={{ fontSize: 18, marginBottom: 10 }}>
+          {poll.question}
+          {closed && <span className="decided">Decided</span>}
+          {isOrganizer && !closed && (
+            <button
+              className="poll-del"
+              onClick={() => (confirmDel === poll.id ? deletePoll(poll.id) : setConfirmDel(poll.id))}
+            >
+              {confirmDel === poll.id ? "Click again to remove" : "Remove"}
+            </button>
+          )}
+        </h3>
+        {scored.map(({ o, yes, maybe, no }) => {
+          const mine = dv.find((v) => v.user_id === userId && v.option_id === o.id)?.answer;
+          const isBest = best && best.o.id === o.id && best.yes > 0;
+          return (
+            <div key={o.id} className={`date-row ${isBest ? "best" : ""}`}>
+              <div className="d-lab">
+                <span className="name">{o.label}</span>
+                {isBest && <span className="d-best">Front-runner</span>}
+                {o.meta && <span className="meta">{o.meta}</span>}
+                {(yes + maybe + no) > 0 && (
+                  <span className="d-counts">{yes} yes · {maybe} maybe · {no} no</span>
+                )}
+              </div>
+              <div className="d-btns">
+                {(["yes", "maybe", "no"] as const).map((a) => (
+                  <button
+                    key={a}
+                    className={`d-btn ${a} ${mine === a ? "on" : ""}`}
+                    disabled={closed}
+                    onClick={() => voteDate(poll, o.id, a)}
+                  >
+                    {a === "yes" ? "Yes" : a === "maybe" ? "Maybe" : "No"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <p className="foot-note">
+          {closed
+            ? "Dates locked in."
+            : `${answeredAll} of ${members.length} travelers have answered every date. When everyone has, the results go to the whole group automatically.`}
+        </p>
+      </div>
+    );
+  }
+
   function pollBlock(poll: Poll) {
+    if (poll.kind === "dates") return dateBlock(poll);
     const total = poll.votes.length;
     const mine = poll.votes.find((v) => v.user_id === userId)?.option_id;
     const isBudget = poll.kind === "budget";
@@ -337,26 +503,45 @@ ${link}`,
           pollFormStep === n ? (
             <div className="bw" style={{ marginTop: 0 }}>
               <h3>New poll for this step</h3>
+              <div className="tpl-chips" style={{ marginBottom: 12 }}>
+                <button className={`tpl-chip ${pfKind === "choice" ? "on" : ""}`} onClick={() => setPfKind("choice")}>
+                  Pick one winner
+                </button>
+                <button className={`tpl-chip ${pfKind === "dates" ? "on" : ""}`} onClick={() => setPfKind("dates")}>
+                  Date availability
+                </button>
+              </div>
+              <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                {pfKind === "dates"
+                  ? "List each candidate date range on its own line. Every traveler answers Yes, Maybe, or No for each one."
+                  : "The group votes and one option wins."}
+              </p>
               <input
                 className="pf-input"
-                placeholder="Your question, e.g. Which week works best?"
+                placeholder={pfKind === "dates" ? "e.g. Which of these weeks can you make?" : "Your question, e.g. Which house style fits us?"}
                 value={pfQ}
                 onChange={(e) => setPfQ(e.target.value)}
               />
               <textarea
                 className="pf-input"
                 rows={4}
-                placeholder={"One option per line. Add a detail after a | if you like:\nJune 12–19 | school's out\nJuly 10–17"}
+                placeholder={pfKind === "dates"
+                  ? "June 12–19\nJuly 10–17\nAugust 7–14"
+                  : "One option per line. Add a detail after a | if you like:\nBig villa | everyone under one roof\nResort rooms"}
                 value={pfOpts}
                 onChange={(e) => setPfOpts(e.target.value)}
               />
               <div className="step-actions" style={{ marginTop: 12 }}>
                 <button className="btn btn-primary btn-sm" onClick={() => createPoll(n)}>Create poll</button>
-                <button className="btn btn-outline btn-sm" onClick={() => { setPollFormStep(null); setPfQ(""); setPfOpts(""); }}>Cancel</button>
+                <button className="btn btn-outline btn-sm" onClick={() => { setPollFormStep(null); setPfQ(""); setPfOpts(""); setPfKind("choice"); }}>Cancel</button>
               </div>
             </div>
           ) : (
-            <button className="btn btn-outline btn-sm" style={{ marginBottom: 26 }} onClick={() => setPollFormStep(n)}>
+            <button
+              className="btn btn-outline btn-sm"
+              style={{ marginBottom: 26 }}
+              onClick={() => { setPollFormStep(n); setPfKind(n === 3 ? "dates" : "choice"); }}
+            >
               + Add your own poll
             </button>
           )
@@ -487,6 +672,12 @@ ${link}`,
           <>
             {header(3)}
             <p className="lead">The date poll that ends the &quot;any weekend works&quot; spiral. Lock a window early: it&apos;s what makes the flight-savings step possible.</p>
+            {isOrganizer && !completed.has(3) && !polls.some((p) => p.step_n === 3 && p.kind === "dates") && (
+              <div className="callout sage">
+                <b>Put real dates on the table</b>
+                Use &quot;Add your own poll&quot; below and pick Date availability. List your actual candidate weeks; every traveler answers Yes, Maybe, or No for each. The front-runner surfaces itself.
+              </div>
+            )}
             {stepPolls(3)}
             <div className="callout">
               <b>Method rule: 72-hour decision window</b>
@@ -804,6 +995,22 @@ members.map((m) => `"${m.name}","${fmt(dep)}","${fmt(bal)}","60 days before depa
                 })}
               </div>
             </div>
+            {tripShape().length > 0 && (
+              <div className="card side-steps" style={{ marginTop: 18 }}>
+                <div className="ts-head">The trip so far</div>
+                <div style={{ padding: "2px 18px 16px" }}>
+                  {tripShape().map((it) => (
+                    <div key={it.label} className="ts-row">
+                      <span className="ts-k">{it.label}</span>
+                      <span className="ts-v">
+                        {it.value}
+                        <em className={it.locked ? "lk" : "ln"}>{it.locked ? "locked in" : "leaning"}</em>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </aside>
           <main>
             <div className="card panel">{stepContent(current)}</div>

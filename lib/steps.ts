@@ -31,6 +31,27 @@ export const DEFAULT_POLLS: {
   {
     step_n: 2,
     kind: "choice",
+    question: "What's the pace?",
+    options: [
+      { label: "🛋️ Deep relaxation", meta: "Slow mornings, books, naps by water" },
+      { label: "⚖️ Balanced mix", meta: "One anchor activity a day, then free" },
+      { label: "⚡ Full days", meta: "Up early, pack it in, sleep when we're home" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
+    question: "What's the setting?",
+    options: [
+      { label: "🌊 Ocean & beach", meta: "Salt air, sand, sunsets" },
+      { label: "⛰️ Mountains & nature", meta: "Trails, views, campfires" },
+      { label: "🏙️ City & culture", meta: "Museums, neighborhoods, nightlife" },
+      { label: "🌾 Countryside & quiet", meta: "Vineyards, villages, back roads" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
     question: "Top non-negotiable?",
     options: [
       { label: "Everyone under one roof", meta: "One big house beats five hotel rooms" },
