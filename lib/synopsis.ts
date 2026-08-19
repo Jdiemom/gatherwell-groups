@@ -47,6 +47,27 @@ export function tripVisionHtml(groupName: string, polls: VisionPoll[], travelers
   if (has("kid", "grandparent", "multigenerational", "family")) {
     character.push("it needs to work for every generation, from the earliest riser to the latest sleeper");
   }
+  if (has("luxury", "splurge", "treat")) {
+    character.push("the group is ready to do this one properly, and a trip like that deserves planning that matches");
+  }
+  if (has("budget", "savvy", "stretch", "affordable")) {
+    character.push("every dollar is going toward more trip, not more waste, which is exactly what this method is built for");
+  }
+  if (has("hot", "sunny", "warm")) {
+    character.push("sunshine is non-negotiable");
+  }
+  if (has("snow", "crisp", "cozy")) {
+    character.push("this group wants a season, not just a place");
+  }
+  if (has("nightlife", "dinners out")) {
+    character.push("the evenings are part of the itinerary, not an afterthought");
+  }
+  if (has("drive", "short flight")) {
+    character.push("keeping the travel day short means the trip starts sooner");
+  }
+  if (has("long haul", "anywhere")) {
+    character.push("the group is willing to go far for the right place, which opens the whole map");
+  }
   const characterLine = character.length
     ? `Reading between the votes: ${character.slice(0, 3).join(". And ")}.`
     : `The picture is getting clearer with every vote.`;

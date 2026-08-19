@@ -52,6 +52,49 @@ export const DEFAULT_POLLS: {
   {
     step_n: 2,
     kind: "choice",
+    question: "How far are we willing to go?",
+    options: [
+      { label: "🚗 Drive or short flight", meta: "Under 3 hours door to door" },
+      { label: "✈️ Medium haul", meta: "3–6 hour flight" },
+      { label: "🌍 Long haul, worth it", meta: "The far-away dream" },
+      { label: "🧭 Anywhere for the right trip", meta: "Distance is no object" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
+    question: "What's the weather dream?",
+    options: [
+      { label: "☀️ Hot & sunny", meta: "Pool and beach weather" },
+      { label: "🌤️ Warm days, cool nights", meta: "Shoulder-season perfect" },
+      { label: "🍂 Crisp & cozy", meta: "Sweaters, fires, fall light" },
+      { label: "❄️ Snow", meta: "Mountains and mulled wine" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
+    question: "What do evenings look like?",
+    options: [
+      { label: "🍸 Dinners out & nightlife", meta: "The town is part of the trip" },
+      { label: "🎲 Games & wine at the house", meta: "Stay in, stay up" },
+      { label: "🌅 Early nights, big mornings", meta: "The trip happens in daylight" },
+      { label: "🔀 A mix, night by night", meta: "Read the room" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
+    question: "Comfort level?",
+    options: [
+      { label: "🥂 Luxury, treat ourselves", meta: "This one's a splurge" },
+      { label: "🛏️ Comfortable & smart", meta: "Nice, without the flex" },
+      { label: "🎒 Budget-savvy, more trip", meta: "Stretch every dollar" },
+    ],
+  },
+  {
+    step_n: 2,
+    kind: "choice",
     question: "Top non-negotiable?",
     options: [
       { label: "Everyone under one roof", meta: "One big house beats five hotel rooms" },

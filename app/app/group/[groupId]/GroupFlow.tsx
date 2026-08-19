@@ -15,7 +15,7 @@ type Poll = {
 type Budget = { flights: number; stay: number; activities: number; food: number };
 type Group = {
   id: string; name: string; trip_type: string | null; owner_id: string; join_code: string;
-  data?: { budget?: Budget } | null;
+  data?: { budget?: Budget; tripLength?: number | "vote" } | null;
 };
 
 const AV_COLORS = ["#B4531A", "#5C6E4E", "#B08A3E", "#0E9488", "#7A5C8F", "#A34A5E"];
@@ -50,6 +50,9 @@ export default function GroupFlow(props: {
   const [pfQ, setPfQ] = useState("");
   const [pfOpts, setPfOpts] = useState("");
   const [pfKind, setPfKind] = useState<"choice" | "dates">("choice");
+  const [pfDates, setPfDates] = useState<string[]>([]);
+  const [pfDateDraft, setPfDateDraft] = useState("");
+  const [tripLength, setTripLength] = useState<number | "vote" | null>(group.data?.tripLength ?? null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [inviteTpl, setInviteTpl] = useState<string | null>(null);
@@ -203,18 +206,89 @@ export default function GroupFlow(props: {
     say("Budget saved for the whole group.");
   }
 
+  /* ---------- trip length ---------- */
+  function decidedNights(): number {
+    if (typeof tripLength === "number") return tripLength;
+    // "vote": read the winner of the length poll if there is one
+    const lp = polls.find((p) => p.step_n === 3 && p.kind === "choice" && p.question.toLowerCase().includes("how long"));
+    if (lp && lp.votes.length > 0) {
+      const counts = lp.options.map((o) => ({ o, c: lp.votes.filter((v) => v.option_id === o.id).length }));
+      const win = counts.sort((a, b) => b.c - a.c)[0];
+      const m = win && win.c > 0 ? win.o.label.match(/\d+/) : null;
+      if (m) return parseInt(m[0], 10);
+    }
+    return 7;
+  }
+
+  async function saveTripLength(v: number | "vote") {
+    if (!isOrganizer) return;
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), budget: budget ?? group.data?.budget, tripLength: v } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the trip length. Try again."); return; }
+    setTripLength(v);
+    if (v === "vote") {
+      const exists = polls.some((p) => p.step_n === 3 && p.question.toLowerCase().includes("how long"));
+      if (!exists) {
+        const { data: poll } = await supabase
+          .from("polls")
+          .insert({ group_id: group.id, step_n: 3, kind: "choice", question: "How long should the trip be?" })
+          .select("id")
+          .single();
+        if (poll) {
+          const lengths = [
+            { label: "4 nights", meta: "A long weekend" },
+            { label: "7 nights", meta: "One full week" },
+            { label: "10 nights", meta: "Room to breathe" },
+            { label: "14 nights", meta: "The big one" },
+          ];
+          const { data: created } = await supabase
+            .from("poll_options")
+            .insert(lengths.map((l, i) => ({ poll_id: poll.id, label: l.label, meta: l.meta, sort: i })))
+            .select("id, label, meta, sort");
+          if (created) {
+            setPolls((ps) => [...ps, {
+              id: poll.id, step_n: 3, kind: "choice", question: "How long should the trip be?",
+              options: [...created].sort((a, b) => a.sort - b.sort), votes: [], dvotes: [],
+            }]);
+          }
+        }
+      }
+      say("The group will vote on trip length in Step 3.");
+    } else {
+      say(`Trip length set: ${v} nights.`);
+    }
+  }
+
+  function fmtDateRange(iso: string, nights: number) {
+    const s = new Date(iso + "T12:00:00");
+    const e = new Date(s);
+    e.setDate(s.getDate() + nights);
+    const f = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${f(s)} – ${f(e)} · ${nights} nights`;
+  }
+
   /* ---------- organizer-created polls ---------- */
   async function createPoll(stepN: number) {
-    const q = pfQ.trim();
-    const opts = pfOpts
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => {
-        const [label, meta] = l.split("|").map((s) => s.trim());
-        return { label, meta: meta || null };
-      });
-    if (!q || opts.length < 2) { say("Add a question and at least two options, one per line."); return; }
+    const q = pfQ.trim() || (pfKind === "dates" ? "Which of these dates can you make?" : "");
+    let opts: { label: string; meta: string | null }[];
+    if (pfKind === "dates") {
+      const nights = decidedNights();
+      opts = [...pfDates].sort().map((d) => ({ label: fmtDateRange(d, nights), meta: null }));
+      if (opts.length < 2) { say("Add at least two candidate dates with the calendar."); return; }
+    } else {
+      opts = pfOpts
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+          const [label, meta] = l.split("|").map((s) => s.trim());
+          return { label, meta: meta || null };
+        });
+      if (!q || opts.length < 2) { say("Add a question and at least two options, one per line."); return; }
+    }
     const supabase = supabaseBrowser();
     const { data: poll, error } = await supabase
       .from("polls")
@@ -232,7 +306,7 @@ export default function GroupFlow(props: {
       id: poll.id, step_n: stepN, kind: pfKind, question: q,
       options: [...created].sort((a, b) => a.sort - b.sort), votes: [], dvotes: [],
     }]);
-    setPfQ(""); setPfOpts(""); setPollFormStep(null); setPfKind("choice");
+    setPfQ(""); setPfOpts(""); setPfDates([]); setPfDateDraft(""); setPollFormStep(null); setPfKind("choice");
     say("Poll added. Your group can vote now.");
   }
 
@@ -366,6 +440,13 @@ ${link}`,
       if (w) items.push({ label, value: w, locked: completed.has(n) });
     };
     push("Vision", 2);
+    if (tripLength) {
+      items.push({
+        label: "Length",
+        value: typeof tripLength === "number" ? `${tripLength} nights` : `${decidedNights()} nights (group vote)`,
+        locked: typeof tripLength === "number" || completed.has(3),
+      });
+    }
     push("Dates", 3);
     if (budget || completed.has(4)) {
       items.push({ label: "Budget", value: `${fmt(budgetTotal(budget ?? defaultBudget()))} per person`, locked: completed.has(4) });
@@ -503,37 +584,75 @@ ${link}`,
           pollFormStep === n ? (
             <div className="bw" style={{ marginTop: 0 }}>
               <h3>New poll for this step</h3>
-              <div className="tpl-chips" style={{ marginBottom: 12 }}>
-                <button className={`tpl-chip ${pfKind === "choice" ? "on" : ""}`} onClick={() => setPfKind("choice")}>
-                  Pick one winner
-                </button>
-                <button className={`tpl-chip ${pfKind === "dates" ? "on" : ""}`} onClick={() => setPfKind("dates")}>
-                  Date availability
-                </button>
-              </div>
+              {n === 3 && (
+                <div className="tpl-chips" style={{ marginBottom: 12 }}>
+                  <button className={`tpl-chip ${pfKind === "choice" ? "on" : ""}`} onClick={() => setPfKind("choice")}>
+                    Pick one winner
+                  </button>
+                  <button className={`tpl-chip ${pfKind === "dates" ? "on" : ""}`} onClick={() => setPfKind("dates")}>
+                    Date availability
+                  </button>
+                </div>
+              )}
               <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
                 {pfKind === "dates"
-                  ? "List each candidate date range on its own line. Every traveler answers Yes, Maybe, or No for each one."
+                  ? `Pick each candidate start date from the calendar. Each becomes a ${decidedNights()}-night window${tripLength === "vote" ? " (from the group's length vote)" : tripLength ? "" : " (set the trip length in Step 1 to change this)"}, and every traveler answers Yes, Maybe, or No.`
                   : "The group votes and one option wins."}
               </p>
               <input
                 className="pf-input"
-                placeholder={pfKind === "dates" ? "e.g. Which of these weeks can you make?" : "Your question, e.g. Which house style fits us?"}
+                placeholder={pfKind === "dates" ? "Which of these dates can you make?" : "Your question, e.g. Which house style fits us?"}
                 value={pfQ}
                 onChange={(e) => setPfQ(e.target.value)}
               />
-              <textarea
-                className="pf-input"
-                rows={4}
-                placeholder={pfKind === "dates"
-                  ? "June 12–19\nJuly 10–17\nAugust 7–14"
-                  : "One option per line. Add a detail after a | if you like:\nBig villa | everyone under one roof\nResort rooms"}
-                value={pfOpts}
-                onChange={(e) => setPfOpts(e.target.value)}
-              />
+              {pfKind === "dates" ? (
+                <>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+                    <input
+                      type="date"
+                      className="pf-input"
+                      style={{ marginBottom: 0, maxWidth: 220 }}
+                      value={pfDateDraft}
+                      onChange={(e) => setPfDateDraft(e.target.value)}
+                    />
+                    <button
+                      className="btn btn-outline btn-sm"
+                      onClick={() => {
+                        if (!pfDateDraft) { say("Pick a start date first."); return; }
+                        if (!pfDates.includes(pfDateDraft)) setPfDates((d) => [...d, pfDateDraft]);
+                        setPfDateDraft("");
+                      }}
+                    >
+                      Add date
+                    </button>
+                  </div>
+                  {pfDates.length > 0 && (
+                    <div className="tpl-chips" style={{ marginBottom: 10 }}>
+                      {[...pfDates].sort().map((d) => (
+                        <button
+                          key={d}
+                          className="tpl-chip on"
+                          title="Click to remove"
+                          onClick={() => setPfDates((ds) => ds.filter((x) => x !== d))}
+                        >
+                          {fmtDateRange(d, decidedNights())} ✕
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <textarea
+                  className="pf-input"
+                  rows={4}
+                  placeholder={"One option per line. Add a detail after a | if you like:\nBig villa | everyone under one roof\nResort rooms"}
+                  value={pfOpts}
+                  onChange={(e) => setPfOpts(e.target.value)}
+                />
+              )}
               <div className="step-actions" style={{ marginTop: 12 }}>
                 <button className="btn btn-primary btn-sm" onClick={() => createPoll(n)}>Create poll</button>
-                <button className="btn btn-outline btn-sm" onClick={() => { setPollFormStep(null); setPfQ(""); setPfOpts(""); setPfKind("choice"); }}>Cancel</button>
+                <button className="btn btn-outline btn-sm" onClick={() => { setPollFormStep(null); setPfQ(""); setPfOpts(""); setPfDates([]); setPfDateDraft(""); setPfKind("choice"); }}>Cancel</button>
               </div>
             </div>
           ) : (
@@ -597,6 +716,33 @@ ${link}`,
                   {m.name}{m.role === "organizer" ? " · organizer" : ""}
                 </span>
               ))}
+            </div>
+            <div className="bw">
+              <h3>How long is this trip?</h3>
+              <p className="bw-note" style={{ marginTop: 0, marginBottom: 12 }}>
+                {isOrganizer
+                  ? "Set it now, or let the group vote in Step 3. Date options will use this length."
+                  : "Your organizer sets this, or the group votes on it in Step 3."}
+              </p>
+              <div className="tpl-chips">
+                {([
+                  [4, "Long weekend · 4 nights"],
+                  [7, "One week · 7 nights"],
+                  [10, "Ten days · 10 nights"],
+                  [14, "Two weeks · 14 nights"],
+                  ["vote", "Let the group vote"],
+                ] as [number | "vote", string][]).map(([v, label]) => (
+                  <button
+                    key={String(v)}
+                    className={`tpl-chip ${tripLength === v ? "on" : ""}`}
+                    disabled={!isOrganizer}
+                    style={!isOrganizer ? { cursor: "default", opacity: tripLength === v ? 1 : 0.45 } : undefined}
+                    onClick={() => isOrganizer && saveTripLength(v)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="callout sage">
               <b>Invite your group</b>
