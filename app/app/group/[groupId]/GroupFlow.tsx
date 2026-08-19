@@ -11,10 +11,24 @@ type Poll = {
   options: { id: string; label: string; meta: string | null; sort: number }[];
   votes: { option_id: string; user_id: string }[];
 };
-type Group = { id: string; name: string; trip_type: string | null; owner_id: string; join_code: string };
+type Budget = { flights: number; stay: number; activities: number; food: number };
+type Group = {
+  id: string; name: string; trip_type: string | null; owner_id: string; join_code: string;
+  data?: { budget?: Budget } | null;
+};
 
 const AV_COLORS = ["#B4531A", "#5C6E4E", "#B08A3E", "#0E9488", "#7A5C8F", "#A34A5E"];
 const fmt = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
+
+const BUDGET_ROWS: [keyof Budget, string][] = [
+  ["flights", "Flights"],
+  ["stay", "Accommodation"],
+  ["activities", "Activities"],
+  ["food", "Food & local"],
+];
+const budgetBase = (b: Budget) => b.flights + b.stay + b.activities + b.food;
+const budgetBuffer = (b: Budget) => Math.round(budgetBase(b) * 0.1);
+const budgetTotal = (b: Budget) => budgetBase(b) + budgetBuffer(b);
 
 export default function GroupFlow(props: {
   userId: string; group: Group; members: Member[]; completed: number[]; polls: Poll[];
@@ -30,6 +44,13 @@ export default function GroupFlow(props: {
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<{ title: string; body: string; fname: string; fdata?: string } | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
+  const [budget, setBudget] = useState<Budget | null>(group.data?.budget ?? null);
+  const [pollFormStep, setPollFormStep] = useState<number | null>(null);
+  const [pfQ, setPfQ] = useState("");
+  const [pfOpts, setPfOpts] = useState("");
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  const [inviteTpl, setInviteTpl] = useState<string | null>(null);
 
   const nextStep = useMemo(() => {
     for (let i = 1; i <= 9; i++) if (!completed.has(i)) return i;
@@ -89,6 +110,79 @@ export default function GroupFlow(props: {
     say(msg || `Step ${n} complete. Step ${n + 1} unlocked!`);
   }
 
+  /* ---------- budget: derived from the group's real vote, adjustable by the organizer ---------- */
+  function votedBudgetTarget(): number | null {
+    const bp = polls.find((p) => p.kind === "budget");
+    if (!bp || bp.votes.length === 0) return null;
+    const counts = bp.options.map((o) => ({ o, c: bp.votes.filter((v) => v.option_id === o.id).length }));
+    const win = counts.sort((a, b) => b.c - a.c)[0];
+    if (!win || win.c === 0) return null;
+    const nums = (win.o.label.match(/\d[\d,]*/g) || []).map((s) => parseInt(s.replace(/,/g, ""), 10));
+    if (!nums.length) return null;
+    return nums.length >= 2 ? Math.round((nums[0] + nums[1]) / 2) : Math.round(nums[0] * 1.15);
+  }
+
+  function defaultBudget(): Budget {
+    const target = votedBudgetTarget() ?? 1782;
+    const base = target / 1.1;
+    const r = (x: number) => Math.max(0, Math.round(x / 10) * 10);
+    return { flights: r(base * 0.35), stay: r(base * 0.3), activities: r(base * 0.15), food: r(base * 0.2) };
+  }
+
+  async function saveBudget(b: Budget) {
+    if (!isOrganizer) { say("Only the organizer can save the budget."); return; }
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), budget: b } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the budget. Try again."); return; }
+    setBudget(b);
+    say("Budget saved for the whole group.");
+  }
+
+  /* ---------- organizer-created polls ---------- */
+  async function createPoll(stepN: number) {
+    const q = pfQ.trim();
+    const opts = pfOpts
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [label, meta] = l.split("|").map((s) => s.trim());
+        return { label, meta: meta || null };
+      });
+    if (!q || opts.length < 2) { say("Add a question and at least two options, one per line."); return; }
+    const supabase = supabaseBrowser();
+    const { data: poll, error } = await supabase
+      .from("polls")
+      .insert({ group_id: group.id, step_n: stepN, kind: "choice", question: q })
+      .select("id")
+      .single();
+    if (error || !poll) { say("Couldn't create the poll. Try again."); return; }
+    const rows = opts.map((o, i) => ({ poll_id: poll.id, label: o.label, meta: o.meta, sort: i }));
+    const { data: created, error: e2 } = await supabase
+      .from("poll_options")
+      .insert(rows)
+      .select("id, label, meta, sort");
+    if (e2 || !created) { say("Poll saved but its options failed. Remove it and try again."); return; }
+    setPolls((ps) => [...ps, {
+      id: poll.id, step_n: stepN, kind: "choice", question: q,
+      options: [...created].sort((a, b) => a.sort - b.sort), votes: [],
+    }]);
+    setPfQ(""); setPfOpts(""); setPollFormStep(null);
+    say("Poll added. Your group can vote now.");
+  }
+
+  async function deletePoll(pollId: string) {
+    const supabase = supabaseBrowser();
+    const { error } = await supabase.from("polls").delete().eq("id", pollId);
+    if (error) { say("Couldn't remove the poll."); return; }
+    setPolls((ps) => ps.filter((p) => p.id !== pollId));
+    setConfirmDel(null);
+    say("Poll removed.");
+  }
+
   async function reopenStep(n: number) {
     if (!isOrganizer) { say("Only the organizer can reopen a step."); return; }
     const supabase = supabaseBrowser();
@@ -109,6 +203,56 @@ export default function GroupFlow(props: {
 
   function inviteLink() {
     return `${window.location.origin}/join/${group.join_code}`;
+  }
+
+  const INVITE_TEMPLATES: { key: string; label: string; text: (link: string) => string }[] = [
+    {
+      key: "family",
+      label: "Family",
+      text: (link) =>
+`Hi family! I'm organizing our ${group.name} trip on Groups by Gatherwell. It walks us through the planning one decision at a time: dates, budget, where we stay, all of it. Everyone gets a vote, and nothing is booked until we've all weighed in.
+
+I've covered the membership for the whole group, so it costs you nothing. Just tap the link, sign in with your email, and vote when a poll comes up. Two minutes, no app to download.
+
+${link}`,
+    },
+    {
+      key: "friends",
+      label: "Friends",
+      text: (link) =>
+`The trip is happening. I set us up on Groups by Gatherwell so the planning doesn't die in the group chat. It runs us through every decision in order and we all vote.
+
+Membership's on me. Your only job: click the link, sign in with your email, and vote when a poll drops. Two minutes, tops. First poll is already live.
+
+${link}`,
+    },
+    {
+      key: "facts",
+      label: "Just the facts",
+      text: (link) =>
+`Hi everyone. I've set up our ${group.name} trip on Groups by Gatherwell. It guides the group through nine steps: dates, budget, destination, flights, stay, and activities. We vote on each decision, it locks in, and we move to the next one.
+
+I've taken care of the membership cost for the group. Please click the link below, sign in with your email, and cast your first votes this week so we can keep things moving.
+
+${link}`,
+    },
+  ];
+
+  function pickInviteTemplate(key: string) {
+    const t = INVITE_TEMPLATES.find((x) => x.key === key);
+    if (!t) return;
+    setInviteTpl(key);
+    setInviteMsg(t.text(inviteLink()));
+  }
+
+  async function copyInviteMsg() {
+    if (!inviteMsg) return;
+    try {
+      await navigator.clipboard.writeText(inviteMsg);
+      say("Invite message copied. Paste it anywhere your group talks.");
+    } catch {
+      say("Couldn't copy automatically. Select the text and copy it.");
+    }
   }
   async function copyInvite() {
     try {
@@ -143,6 +287,14 @@ export default function GroupFlow(props: {
         <h3 style={{ fontSize: 18, marginBottom: 10 }}>
           {poll.question}
           {closed && <span className="decided">Decided</span>}
+          {isOrganizer && !closed && (
+            <button
+              className="poll-del"
+              onClick={() => (confirmDel === poll.id ? deletePoll(poll.id) : setConfirmDel(poll.id))}
+            >
+              {confirmDel === poll.id ? "Click again to remove" : "Remove"}
+            </button>
+          )}
         </h3>
         {poll.options.map((o) => {
           const count = poll.votes.filter((v) => v.option_id === o.id).length;
@@ -176,7 +328,41 @@ export default function GroupFlow(props: {
   }
 
   function stepPolls(n: number) {
-    return polls.filter((p) => p.step_n === n).map(pollBlock);
+    const blocks = polls.filter((p) => p.step_n === n).map(pollBlock);
+    const locked = completed.has(n);
+    return (
+      <>
+        {blocks}
+        {isOrganizer && !locked && (
+          pollFormStep === n ? (
+            <div className="bw" style={{ marginTop: 0 }}>
+              <h3>New poll for this step</h3>
+              <input
+                className="pf-input"
+                placeholder="Your question, e.g. Which week works best?"
+                value={pfQ}
+                onChange={(e) => setPfQ(e.target.value)}
+              />
+              <textarea
+                className="pf-input"
+                rows={4}
+                placeholder={"One option per line. Add a detail after a | if you like:\nJune 12–19 | school's out\nJuly 10–17"}
+                value={pfOpts}
+                onChange={(e) => setPfOpts(e.target.value)}
+              />
+              <div className="step-actions" style={{ marginTop: 12 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => createPoll(n)}>Create poll</button>
+                <button className="btn btn-outline btn-sm" onClick={() => { setPollFormStep(null); setPfQ(""); setPfOpts(""); }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn btn-outline btn-sm" style={{ marginBottom: 26 }} onClick={() => setPollFormStep(n)}>
+              + Add your own poll
+            </button>
+          )
+        )}
+      </>
+    );
   }
 
   function header(n: number) {
@@ -234,6 +420,48 @@ export default function GroupFlow(props: {
                 <button className="btn btn-sage btn-sm" onClick={copyInvite}>Copy invite link</button>
               </div>
             </div>
+            {isOrganizer && (
+              <div className="bw">
+                <h3>Invite message</h3>
+                <p className="bw-note" style={{ marginTop: 0, marginBottom: 12 }}>
+                  Pick a style, tweak the words, send it wherever your group talks.
+                </p>
+                <div className="tpl-chips">
+                  {INVITE_TEMPLATES.map((t) => (
+                    <button
+                      key={t.key}
+                      className={`tpl-chip ${inviteTpl === t.key ? "on" : ""}`}
+                      onClick={() => pickInviteTemplate(t.key)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {inviteMsg !== null && (
+                  <>
+                    <textarea
+                      className="pf-input"
+                      rows={9}
+                      value={inviteMsg}
+                      onChange={(e) => setInviteMsg(e.target.value)}
+                      style={{ marginTop: 12 }}
+                    />
+                    <div className="step-actions" style={{ marginTop: 8 }}>
+                      <button className="btn btn-primary btn-sm" onClick={copyInviteMsg}>Copy message</button>
+                      <a
+                        className="btn btn-outline btn-sm"
+                        href={`mailto:?subject=${encodeURIComponent(`Our ${group.name} trip: you're in`)}&body=${encodeURIComponent(inviteMsg)}`}
+                      >
+                        Email it
+                      </a>
+                      <a className="btn btn-outline btn-sm" href={`sms:?&body=${encodeURIComponent(inviteMsg)}`}>
+                        Text it
+                      </a>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <div className="callout">
               <b>Method rule: no planning around a “maybe”</b>
               Pick a commitment device with your group: a small deposit, a reply-by date, or the
@@ -273,6 +501,51 @@ export default function GroupFlow(props: {
             {header(4)}
             <p className="lead">Money talk sinks friendships when it&apos;s public. Everyone votes a comfortable number anonymously; the group adopts a target from the honest middle.</p>
             {stepPolls(4)}
+            {(() => {
+              const b = budget ?? defaultBudget();
+              const editable = isOrganizer && !completed.has(4);
+              const n = members.length;
+              const upd = (k: keyof Budget, v: string) =>
+                setBudget({ ...b, [k]: Math.max(0, parseInt(v.replace(/\D/g, "") || "0", 10)) });
+              return (
+                <div className="bw">
+                  <h3>
+                    Budget worksheet
+                    {votedBudgetTarget() && !budget ? <span className="bw-tag">started from your group&apos;s vote</span> : null}
+                  </h3>
+                  <div className="bw-row bw-head">
+                    <span>Category</span><span>Per person</span><span>Group of {n}</span>
+                  </div>
+                  {BUDGET_ROWS.map(([k, label]) => (
+                    <div className="bw-row" key={k}>
+                      <span>{label}</span>
+                      {editable ? (
+                        <input inputMode="numeric" value={b[k]} onChange={(e) => upd(k, e.target.value)} />
+                      ) : (
+                        <span>{fmt(b[k])}</span>
+                      )}
+                      <span>{fmt(b[k] * n)}</span>
+                    </div>
+                  ))}
+                  <div className="bw-row">
+                    <span>Buffer (10%)</span><span>{fmt(budgetBuffer(b))}</span><span>{fmt(budgetBuffer(b) * n)}</span>
+                  </div>
+                  <div className="bw-row total">
+                    <span>TOTAL</span><span>{fmt(budgetTotal(b))}</span><span>{fmt(budgetTotal(b) * n)}</span>
+                  </div>
+                  {editable && (
+                    <div className="step-actions" style={{ marginTop: 14 }}>
+                      <button className="btn btn-primary btn-sm" onClick={() => saveBudget(b)}>Save budget for the group</button>
+                    </div>
+                  )}
+                  <p className="bw-note">
+                    {editable
+                      ? "Adjust the numbers to fit your trip, then save. Every later output uses these figures."
+                      : "Set by your organizer. Every budget output uses these figures."}
+                  </p>
+                </div>
+              );
+            })()}
             <div className="callout teal">
               <b>Track it in the Gatherwell Budgeting app</b>
               Once adopted, your budget becomes the yardstick for every later choice.
@@ -290,13 +563,11 @@ export default function GroupFlow(props: {
             <div className="step-actions">
               {completeBtn(4, "Adopt Budget →", true, "Budget set. Advisor fee avoided: ~$40/person.")}
               <button className="btn btn-outline btn-sm" onClick={() => {
+                const b = budget ?? defaultBudget();
                 const rows: [string, number][] = [
-                  ["Flights", 600],
-                  ["Accommodation", 480],
-                  ["Activities", 240],
-                  ["Food & local", 300],
-                  ["Buffer (10%)", 162],
-                  ["TOTAL", 1782],
+                  ...BUDGET_ROWS.map(([k, label]) => [label, b[k]] as [string, number]),
+                  ["Buffer (10%)", budgetBuffer(b)],
+                  ["TOTAL", budgetTotal(b)],
                 ];
                 setModal({
                   title: "Group Budget",
@@ -439,6 +710,7 @@ BOOKING PATH
                 body:
 `${group.name.toUpperCase()} · MASTER ITINERARY
 Travelers: ${members.length}
+Budget: ${fmt(budgetTotal(budget ?? defaultBudget()))} per person · ${fmt(budgetTotal(budget ?? defaultBudget()) * members.length)} group total
 
 Assembled from your group's winning votes:
 ${polls.map((p) => {
@@ -450,18 +722,25 @@ ${polls.map((p) => {
 Booked through: Expedia · GetYourGuide · Rental Escapes · Luxury Rentals
 Need a human? gatherwelltravel.com`,
               })}>Itinerary preview</button>
-              <button className="btn btn-outline btn-sm" onClick={() => setModal({
-                title: "Payment Schedule",
-                fname: "Payment-Schedule.csv",
-                body:
+              <button className="btn btn-outline btn-sm" onClick={() => {
+                const b = budget ?? defaultBudget();
+                const total = budgetTotal(b);
+                const dep = Math.round(total * 0.25);
+                const bal = total - dep;
+                setModal({
+                  title: "Payment Schedule",
+                  fname: "Payment-Schedule.csv",
+                  body:
 `PAYMENT SCHEDULE · ${group.name}
+Per person: ${fmt(total)} · Group total: ${fmt(total * members.length)}
 
 ${"Traveler".padEnd(20)}${"Deposit (25%)".padEnd(16)}${"Balance".padEnd(11)}Balance Due
-${members.map((m) => m.name.padEnd(20) + "$446".padEnd(16) + "$1,336".padEnd(11) + "60 days before departure").join("\n")}`,
-                fdata:
+${members.map((m) => m.name.padEnd(20) + fmt(dep).padEnd(16) + fmt(bal).padEnd(11) + "60 days before departure").join("\n")}`,
+                  fdata:
 `Traveler,Deposit (25%),Balance,Balance Due\n` +
-members.map((m) => `"${m.name}","$446","$1,336","60 days before departure"`).join("\n"),
-              })}>Payment schedule</button>
+members.map((m) => `"${m.name}","${fmt(dep)}","${fmt(bal)}","60 days before departure"`).join("\n"),
+                });
+              }}>Payment schedule</button>
             </div>
             {done && (
               <div className="callout" style={{ marginTop: 26 }}>

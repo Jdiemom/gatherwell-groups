@@ -189,3 +189,40 @@ do $$ begin
       exists (select 1 from public.groups g where g.id = group_id and g.owner_id = auth.uid())
     );
 exception when duplicate_object then null; end $$;
+
+-- ============ upgrade (Aug 19, 2026): group data column + organizer-managed polls ============
+alter table public.groups add column if not exists data jsonb not null default '{}'::jsonb;
+
+do $$ begin
+  create policy "organizer creates polls" on public.polls
+    for insert with check (
+      exists (select 1 from public.groups g where g.id = group_id and g.owner_id = auth.uid())
+    );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "organizer deletes polls" on public.polls
+    for delete using (
+      exists (select 1 from public.groups g where g.id = group_id and g.owner_id = auth.uid())
+    );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "organizer creates options" on public.poll_options
+    for insert with check (
+      exists (
+        select 1 from public.polls p join public.groups g on g.id = p.group_id
+        where p.id = poll_id and g.owner_id = auth.uid()
+      )
+    );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "organizer deletes options" on public.poll_options
+    for delete using (
+      exists (
+        select 1 from public.polls p join public.groups g on g.id = p.group_id
+        where p.id = poll_id and g.owner_id = auth.uid()
+      )
+    );
+exception when duplicate_object then null; end $$;
