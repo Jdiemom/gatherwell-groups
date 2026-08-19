@@ -181,3 +181,11 @@ do $$ begin
       )
     );
 exception when duplicate_object then null; end $$;
+
+-- ============ hotfix (Aug 19, 2026): organizer can reopen a completed step ============
+do $$ begin
+  create policy "organizer reopens steps" on public.step_progress
+    for delete using (
+      exists (select 1 from public.groups g where g.id = group_id and g.owner_id = auth.uid())
+    );
+exception when duplicate_object then null; end $$;

@@ -60,6 +60,10 @@ export default function GroupFlow(props: {
   }
 
   async function vote(poll: Poll, optionId: string) {
+    if (completed.has(poll.step_n)) {
+      say("This decision is locked in. Ask your organizer to reopen the step if plans changed.");
+      return;
+    }
     const supabase = supabaseBrowser();
     const { error } = await supabase
       .from("votes")
@@ -83,6 +87,24 @@ export default function GroupFlow(props: {
     setCompleted((c) => new Set([...c, n]));
     if (n < 9) setCurrent(n + 1);
     say(msg || `Step ${n} complete. Step ${n + 1} unlocked!`);
+  }
+
+  async function reopenStep(n: number) {
+    if (!isOrganizer) { say("Only the organizer can reopen a step."); return; }
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("step_progress")
+      .delete()
+      .eq("group_id", group.id)
+      .eq("step_n", n);
+    if (error) { say("Couldn't reopen the step. Try again."); return; }
+    setCompleted((c) => {
+      const next = new Set(c);
+      next.delete(n);
+      return next;
+    });
+    setCurrent(n);
+    say(`Step ${n} reopened. Voting is live again.`);
   }
 
   function inviteLink() {
@@ -114,17 +136,21 @@ export default function GroupFlow(props: {
     const total = poll.votes.length;
     const mine = poll.votes.find((v) => v.user_id === userId)?.option_id;
     const isBudget = poll.kind === "budget";
+    const closed = completed.has(poll.step_n);
     const max = Math.max(...poll.options.map((o) => poll.votes.filter((v) => v.option_id === o.id).length), 0);
     return (
       <div key={poll.id} style={{ marginBottom: 26 }}>
-        <h3 style={{ fontSize: 18, marginBottom: 10 }}>{poll.question}</h3>
+        <h3 style={{ fontSize: 18, marginBottom: 10 }}>
+          {poll.question}
+          {closed && <span className="decided">Decided</span>}
+        </h3>
         {poll.options.map((o) => {
           const count = poll.votes.filter((v) => v.option_id === o.id).length;
           const win = total > 0 && count === max && max > 0;
           return (
             <div
               key={o.id}
-              className={`poll-opt ${mine === o.id ? "sel" : ""} ${win ? "win" : ""}`}
+              className={`poll-opt ${mine === o.id && !closed ? "sel" : ""} ${win ? "win" : ""} ${closed ? "closed" : ""}`}
               onClick={() => vote(poll, o.id)}
             >
               <span className="name">{o.label}</span>
@@ -139,7 +165,9 @@ export default function GroupFlow(props: {
           );
         })}
         <p className="foot-note">
-          {isBudget
+          {closed
+            ? "This poll closed when the step was completed. The winning option is locked in."
+            : isBudget
             ? "Budget votes are anonymous: everyone sees the totals, never who picked what."
             : `${total} of ${members.length} travelers have voted.`}
         </p>
@@ -162,7 +190,18 @@ export default function GroupFlow(props: {
   }
 
   function completeBtn(n: number, label: string, enabled = true, msg?: string) {
-    if (completed.has(n)) return <span className="pill" style={{ background: "#F2F5EE", color: "var(--sage-deep)" }}>✓ Step complete</span>;
+    if (completed.has(n)) {
+      return (
+        <>
+          <span className="pill" style={{ background: "#F2F5EE", color: "var(--sage-deep)" }}>✓ Step complete</span>
+          {isOrganizer && (
+            <button className="btn btn-outline btn-sm" onClick={() => reopenStep(n)}>
+              Reopen this step
+            </button>
+          )}
+        </>
+      );
+    }
     if (!isOrganizer) return <span className="foot-note">The organizer completes this step when the group is ready.</span>;
     return (
       <button className="btn btn-primary" disabled={!enabled} onClick={() => completeStep(n, msg)}>

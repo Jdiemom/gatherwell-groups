@@ -216,6 +216,10 @@ footer p{line-height:2}
 .vote-track{grid-column:1/-1;height:3px;background:var(--cream-2);overflow:hidden;margin-top:10px}
 .vote-fill{height:100%;background:var(--sage);transition:width .6s ease}
 .poll-opt.win .vote-fill{background:var(--terracotta)}
+.poll-opt.closed{cursor:default;background:var(--cream)}
+.poll-opt.closed:hover{background:var(--cream);border-color:var(--line)}
+.poll-opt.closed.win{border-color:var(--sage-deep);background:#F3F5EF;z-index:2}
+.decided{display:inline-block;color:var(--sage-deep);border:1px solid #C9D2C0;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:3px 9px;margin-left:10px;vertical-align:2px}
 
 .member-chips{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}
 .chip{display:inline-flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--line);padding:8px 16px 8px 9px;font-size:14.5px;font-weight:600}
