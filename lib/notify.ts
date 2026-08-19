@@ -30,6 +30,57 @@ function emailHtml(heading: string, body: string, ctaUrl: string, ctaText: strin
 </table>`;
 }
 
+/** Sends fully personalized emails (one per recipient, each with its own content). Fails soft. */
+export async function sendPersonalEmails(
+  messages: { to: string; subject: string; heading: string; body: string; extraHtml?: string; ctaUrl: string; ctaText: string }[]
+) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key || messages.length === 0) return false;
+  const batch = messages.slice(0, 100).map((m) => ({
+    from: FROM,
+    to: [m.to],
+    subject: m.subject,
+    html: emailHtml(m.heading, m.body, m.ctaUrl, m.ctaText, m.extraHtml),
+  }));
+  try {
+    const res = await fetch("https://api.resend.com/emails/batch", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(batch),
+    });
+    if (!res.ok) console.error("resend personal batch failed:", res.status, await res.text());
+    return res.ok;
+  } catch (e) {
+    console.error("resend personal batch error:", e);
+    return false;
+  }
+}
+
+/** High-priority email to the Gatherwell advisory inbox (concierge questions, leads). */
+export async function sendAdvisorEmail(opts: { subject: string; heading: string; body: string; extraHtml?: string; replyTo?: string }) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return false;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: FROM,
+        to: ["hello@gatherwelltravel.com"],
+        reply_to: opts.replyTo,
+        subject: opts.subject,
+        headers: { "X-Priority": "1", Importance: "high" },
+        html: emailHtml(opts.heading, opts.body, "https://www.groupsbygatherwell.com/app", "Open the dashboard", opts.extraHtml),
+      }),
+    });
+    if (!res.ok) console.error("advisor email failed:", res.status, await res.text());
+    return res.ok;
+  } catch (e) {
+    console.error("advisor email error:", e);
+    return false;
+  }
+}
+
 /** Sends one email per recipient via Resend's batch endpoint. Fails soft: returns false, never throws. */
 export async function sendGroupEmail(opts: {
   to: string[];

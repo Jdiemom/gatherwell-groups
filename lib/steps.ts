@@ -13,7 +13,7 @@ export const STEPS = [
 /** Default polls seeded for every new group. */
 export const DEFAULT_POLLS: {
   step_n: number;
-  kind: "choice" | "budget";
+  kind: "choice" | "budget" | "multi";
   question: string;
   options: { label: string; meta?: string }[];
 }[] = [
@@ -137,6 +137,15 @@ export const DEFAULT_POLLS: {
     ],
   },
   {
+    step_n: 6,
+    kind: "choice",
+    question: "How are you booking flights?",
+    options: [
+      { label: "I'll book my own", meta: "Buy inside the window; set a Skyscanner price alert" },
+      { label: "I'd like a group quote from Gatherwell", meta: "Needs 10+ travelers from one city. A checked bag is usually included, and names can be finalized with the airline later" },
+    ],
+  },
+  {
     step_n: 7,
     kind: "choice",
     question: "Home base: which stay wins?",
@@ -144,17 +153,24 @@ export const DEFAULT_POLLS: {
       { label: "Big villa, all under one roof", meta: "via Rental Escapes / Luxury Rentals" },
       { label: "Two houses side by side", meta: "Privacy + togetherness" },
       { label: "Resort block of rooms", meta: "All-inclusive ease" },
+      { label: "I'm flexible", meta: "Any of these work for me" },
     ],
   },
   {
     step_n: 8,
-    kind: "choice",
-    question: "Anchor experience: pick your must-do",
+    kind: "multi",
+    question: "Pick every experience you'd join",
     options: [
       { label: "🚤 Private boat day", meta: "via GetYourGuide" },
       { label: "🏛️ Big landmark excursion", meta: "via GetYourGuide" },
       { label: "🍮 Food or cooking experience", meta: "via GetYourGuide" },
       { label: "🤿 Water adventure", meta: "via GetYourGuide" },
+      { label: "💆 Spa afternoon", meta: "Recover from the fun" },
+      { label: "⛳ Golf round", meta: "Half-day, all bragging rights" },
+      { label: "🥾 Guided hike", meta: "Optional early-bird crew" },
+      { label: "🧺 Local market & food tour", meta: "Taste the place" },
+      { label: "🍸 A proper night out", meta: "One big evening" },
+      { label: "🏊 Free pool day", meta: "Do nothing, together" },
     ],
   },
 ];

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import GroupFlow from "./GroupFlow";
 
 export const dynamic = "force-dynamic";
@@ -24,10 +25,21 @@ export default async function GroupPage({ params }: { params: Promise<{ groupId:
 
   const [{ data: group }, { data: members }, { data: progress }, { data: polls }] = await Promise.all([
     supabase.from("groups").select("*").eq("id", groupId).maybeSingle(),
-    supabase.from("group_members").select("user_id, role, profiles:user_id(name, email)").eq("group_id", groupId),
+    supabase.from("group_members").select("user_id, role, meta, profiles:user_id(name, email)").eq("group_id", groupId),
     supabase.from("step_progress").select("step_n, data").eq("group_id", groupId),
     supabase.from("polls").select("id, step_n, kind, question, poll_options(id, label, meta, sort), votes(option_id, user_id), date_votes(option_id, user_id, answer)").eq("group_id", groupId),
   ]);
+
+  // The organizer's subscription decides the group's plan tier (Solo / Group / Concierge)
+  let plan = "group";
+  if (group) {
+    const { data: sub } = await supabaseAdmin()
+      .from("subscriptions")
+      .select("plan, status")
+      .eq("user_id", group.owner_id)
+      .maybeSingle();
+    if (sub?.plan) plan = sub.plan;
+  }
 
   if (!group) {
     return (
@@ -44,10 +56,12 @@ export default async function GroupPage({ params }: { params: Promise<{ groupId:
   return (
     <GroupFlow
       userId={user.id}
+      plan={plan}
       group={group}
       members={(members ?? []).map((m) => {
         const p = m.profiles as unknown as { name: string | null; email: string | null } | null;
-        return { user_id: m.user_id, role: m.role, name: p?.name || p?.email?.split("@")[0] || "Traveler" };
+        const meta = (m as unknown as { meta?: Record<string, string> }).meta ?? {};
+        return { user_id: m.user_id, role: m.role, name: p?.name || p?.email?.split("@")[0] || "Traveler", meta };
       })}
       completed={(progress ?? []).map((p) => p.step_n)}
       polls={(polls ?? []).map((p) => ({

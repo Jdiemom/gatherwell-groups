@@ -5,7 +5,14 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { STEPS } from "@/lib/steps";
 
-type Member = { user_id: string; role: string; name: string };
+type MemberMeta = {
+  answering_for?: "solo" | "couple" | "partner_separate";
+  partner_name?: string;
+  home_airport?: string;
+  bags?: string;
+  cabin?: string;
+};
+type Member = { user_id: string; role: string; name: string; meta: MemberMeta };
 type Poll = {
   id: string; step_n: number; kind: string; question: string;
   options: { id: string; label: string; meta: string | null; sort: number }[];
@@ -13,9 +20,17 @@ type Poll = {
   dvotes?: { option_id: string; user_id: string; answer: string }[];
 };
 type Budget = { flights: number; stay: number; activities: number; food: number };
+type GroupData = {
+  budget?: Budget;
+  tripLength?: number | "vote";
+  discuss?: { whatsapp?: string; video?: string };
+  decisions?: Record<string, string>;
+  destination?: string;
+  [k: string]: unknown;
+};
 type Group = {
   id: string; name: string; trip_type: string | null; owner_id: string; join_code: string;
-  data?: { budget?: Budget; tripLength?: number | "vote" } | null;
+  data?: GroupData | null;
 };
 
 const AV_COLORS = ["#B4531A", "#5C6E4E", "#B08A3E", "#0E9488", "#7A5C8F", "#A34A5E"];
@@ -32,9 +47,10 @@ const budgetBuffer = (b: Budget) => Math.round(budgetBase(b) * 0.1);
 const budgetTotal = (b: Budget) => budgetBase(b) + budgetBuffer(b);
 
 export default function GroupFlow(props: {
-  userId: string; group: Group; members: Member[]; completed: number[]; polls: Poll[];
+  userId: string; plan: string; group: Group; members: Member[]; completed: number[]; polls: Poll[];
 }) {
-  const { userId, group, members } = props;
+  const { userId, plan, group } = props;
+  const [members, setMembers] = useState<Member[]>(props.members);
   const isOrganizer = group.owner_id === userId;
   const [completed, setCompleted] = useState<Set<number>>(new Set(props.completed));
   const [polls, setPolls] = useState<Poll[]>(props.polls);
@@ -56,6 +72,22 @@ export default function GroupFlow(props: {
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [inviteTpl, setInviteTpl] = useState<string | null>(null);
+  const [pfRows, setPfRows] = useState<{ label: string; meta: string }[]>([{ label: "", meta: "" }, { label: "", meta: "" }]);
+  const me = members.find((m) => m.user_id === userId);
+  const [profileOpen, setProfileOpen] = useState(!me?.meta?.answering_for);
+  const [pv, setPv] = useState<MemberMeta & { name?: string }>({ name: me?.name ?? "", ...(me?.meta ?? {}) });
+  const [tieBreak, setTieBreak] = useState<{ stepN: number; polls: Poll[] } | null>(null);
+  const [discuss, setDiscuss] = useState(group.data?.discuss ?? {});
+  const [boostOpen, setBoostOpen] = useState(false);
+  const [boost, setBoost] = useState<{ mode: "lump" | "perPerson" | "cover"; amount: string; anonymous: boolean; confirm: boolean }>({ mode: "lump", amount: "", anonymous: false, confirm: false });
+  const [conciergeMsg, setConciergeMsg] = useState<string | null>(null);
+  const [destSkip, setDestSkip] = useState("");
+  const [suggest, setSuggest] = useState("");
+
+  const w = (uid: string) => (members.find((m) => m.user_id === uid)?.meta?.answering_for === "couple" ? 2 : 1);
+  const headcount = members.reduce((s, m) => s + (m.meta?.answering_for === "couple" ? 2 : 1), 0);
+  const isSolo = plan === "solo";
+  const isConcierge = plan === "concierge";
 
   const nextStep = useMemo(() => {
     for (let i = 1; i <= 9; i++) if (!completed.has(i)) return i;
@@ -64,13 +96,13 @@ export default function GroupFlow(props: {
 
   const savings = useMemo(() => {
     let s = 0;
-    const n = members.length;
+    const n = headcount;
     if (completed.has(4)) s += n * 40;
     if (completed.has(6)) s += Math.round(n * 600 * 0.12);
     if (completed.has(7)) s += n * 25;
     if (completed.has(8)) s += n * 30;
     return s;
-  }, [completed, members.length]);
+  }, [completed, headcount]);
 
   function say(msg: string) {
     setToast(msg);
@@ -100,24 +132,8 @@ export default function GroupFlow(props: {
       const others = p.votes.filter((v) => v.user_id !== userId);
       return { ...p, votes: [...others, { option_id: optionId, user_id: userId }] };
     }));
-    say("Vote recorded.");
-
-    // If this vote was the last one missing, the step advances itself (verified server-side).
-    try {
-      const res = await fetch("/api/steps/auto-advance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId: group.id, stepN: poll.step_n }),
-      });
-      const out = await res.json().catch(() => null);
-      if (out?.advanced) {
-        setCompleted((c) => new Set([...c, poll.step_n]));
-        if (out.nextStep) setCurrent(out.nextStep);
-        say(out.nextStep
-          ? `Everyone voted! Step ${poll.step_n} locked in. Step ${out.nextStep} is open, and the group has been emailed.`
-          : `Everyone voted! Step ${poll.step_n} locked in.`);
-      }
-    } catch { /* auto-advance is best-effort; the organizer can always complete manually */ }
+    say(me?.meta?.answering_for === "couple" ? "Vote recorded, counting for both of you." : "Vote recorded.");
+    autoAdvance(poll.step_n);
   }
 
   async function voteDate(poll: Poll, optionId: string, answer: "yes" | "no" | "maybe") {
@@ -135,18 +151,179 @@ export default function GroupFlow(props: {
       const others = (p.dvotes ?? []).filter((v) => !(v.user_id === userId && v.option_id === optionId));
       return { ...p, dvotes: [...others, { option_id: optionId, user_id: userId, answer }] };
     }));
+    autoAdvance(poll.step_n);
+  }
 
+  /* ---------- traveler profile ---------- */
+  async function saveProfile() {
+    const name = (pv.name ?? "").trim();
+    if (!name) { say("Your name is the one required field."); return; }
+    if (!pv.answering_for) { say("Tell us if you're answering solo or as a couple."); return; }
+    if (pv.answering_for !== "solo" && !(pv.partner_name ?? "").trim()) {
+      say("Add your partner's name."); return;
+    }
+    const supabase = supabaseBrowser();
+    const meta: MemberMeta = {
+      answering_for: pv.answering_for,
+      partner_name: pv.partner_name?.trim() || undefined,
+      home_airport: pv.home_airport?.trim() || undefined,
+      bags: pv.bags,
+      cabin: pv.cabin,
+    };
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      supabase.from("profiles").update({ name }).eq("id", userId),
+      supabase.from("group_members").update({ meta }).eq("group_id", group.id).eq("user_id", userId),
+    ]);
+    if (e1 || e2) { say("Couldn't save. Try again."); return; }
+    setMembers((ms) => ms.map((m) => (m.user_id === userId ? { ...m, name, meta } : m)));
+    setProfileOpen(false);
+    say(meta.answering_for === "couple" ? "Saved. Your votes count for both of you." : "Saved. Welcome aboard!");
+  }
+
+  /* ---------- ties ---------- */
+  function tiedPolls(n: number): Poll[] {
+    return polls.filter((p) => {
+      if (p.step_n !== n || p.kind !== "choice") return false;
+      if (group.data?.decisions?.[p.id]) return false;
+      const counts = p.options
+        .filter((o) => !o.label.toLowerCase().includes("flexible"))
+        .map((o) => p.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0))
+        .sort((a, b) => b - a);
+      return counts.length > 1 && counts[0] > 0 && counts[0] === counts[1];
+    });
+  }
+
+  async function declareWinner(pollId: string, optionId: string) {
+    const supabase = supabaseBrowser();
+    const decisions = { ...(group.data?.decisions ?? {}), [pollId]: optionId };
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), decisions } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the tie-break."); return; }
+    if (group.data) group.data.decisions = decisions; else group.data = { decisions };
+    setTieBreak((t) => {
+      if (!t) return null;
+      const rest = t.polls.filter((p) => p.id !== pollId);
+      return rest.length ? { ...t, polls: rest } : null;
+    });
+    say("Tie broken. Your call is recorded as the decision.");
+  }
+
+  /* ---------- discussion links ---------- */
+  async function saveDiscuss() {
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), discuss } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the links."); return; }
+    if (group.data) group.data.discuss = discuss; else group.data = { discuss };
+    say("Discussion links saved. They'll appear in group emails too.");
+  }
+
+  /* ---------- destination skip ---------- */
+  async function skipDestination() {
+    const dest = destSkip.trim();
+    if (!dest) { say("Type the destination first."); return; }
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), destination: dest } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the destination."); return; }
+    if (group.data) group.data.destination = dest; else group.data = { destination: dest };
+    completeStep(5, `${dest} it is. Step 6 unlocked!`);
+  }
+
+  /* ---------- multi-select activity votes ---------- */
+  async function toggleActivity(poll: Poll, optionId: string) {
+    if (completed.has(poll.step_n)) { say("This step is locked in."); return; }
+    const supabase = supabaseBrowser();
+    const mine = (poll.dvotes ?? []).some((v) => v.user_id === userId && v.option_id === optionId && v.answer === "yes");
+    if (mine) {
+      const { error } = await supabase.from("date_votes").delete().eq("option_id", optionId).eq("user_id", userId);
+      if (error) { say("Couldn't update. Try again."); return; }
+      setPolls((ps) => ps.map((p) => p.id !== poll.id ? p : { ...p, dvotes: (p.dvotes ?? []).filter((v) => !(v.user_id === userId && v.option_id === optionId)) }));
+    } else {
+      const { error } = await supabase.from("date_votes").upsert({ poll_id: poll.id, option_id: optionId, user_id: userId, answer: "yes" });
+      if (error) { say("Couldn't save. Try again."); return; }
+      setPolls((ps) => ps.map((p) => p.id !== poll.id ? p : { ...p, dvotes: [...(p.dvotes ?? []), { option_id: optionId, user_id: userId, answer: "yes" }] }));
+      autoAdvance(poll.step_n);
+    }
+  }
+
+  async function suggestActivity(poll: Poll) {
+    const label = suggest.trim();
+    if (!label) { say("Type your activity idea first."); return; }
+    const supabase = supabaseBrowser();
+    const { data: created, error } = await supabase
+      .from("poll_options")
+      .insert({ poll_id: poll.id, label, meta: `Suggested by ${me?.name ?? "a traveler"}`, sort: poll.options.length })
+      .select("id, label, meta, sort")
+      .single();
+    if (error || !created) { say("Couldn't add it. Try again."); return; }
+    setPolls((ps) => ps.map((p) => (p.id !== poll.id ? p : { ...p, options: [...p.options, created] })));
+    setSuggest("");
+    say("Added! Now vote for it.");
+  }
+
+  /* ---------- concierge ---------- */
+  async function askConcierge(stepN: number) {
+    const text = (conciergeMsg ?? "").trim();
+    if (!text) { say("Type your question first."); return; }
+    const res = await fetch("/api/concierge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: group.id, stepN, message: text }),
+    }).catch(() => null);
+    if (!res?.ok) { say("Couldn't send. Try again, or call us."); return; }
+    setConciergeMsg(null);
+    say("Sent to your advisor with priority. Expect a reply within one business day.");
+  }
+
+  /* ---------- boost the budget ---------- */
+  async function submitBoost() {
+    const amt = parseInt(boost.amount.replace(/\D/g, "") || "0", 10);
+    if (boost.mode !== "cover" && (!amt || amt <= 0)) { say("Enter a real dollar amount."); return; }
+    if (boost.mode === "cover" && boost.amount.trim().toUpperCase() !== "COVER") {
+      say('Type COVER in the box to confirm you mean the whole trip.'); return;
+    }
+    const res = await fetch("/api/budget/boost", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: group.id, mode: boost.mode, amount: boost.mode === "cover" ? 0 : amt, anonymous: boost.anonymous }),
+    }).catch(() => null);
+    if (!res?.ok) { say("Couldn't send the boost. Try again."); return; }
+    setBoostOpen(false);
+    setBoost({ mode: "lump", amount: "", anonymous: false, confirm: false });
+    say("Done. The group has been told, exactly as previewed.");
+  }
+
+  function boostPreview(): string {
+    const amt = parseInt(boost.amount.replace(/\D/g, "") || "0", 10);
+    const donor = boost.anonymous ? "A generous member of your group" : me?.name ?? "You";
+    if (boost.mode === "cover") return `${donor} is covering the entire cost of this trip. Everything the group has planned is now fully funded. Say thank you, and start packing.`;
+    if (boost.mode === "perPerson") return `${donor} just added ${fmt(amt || 0)} per traveler to the trip budget. That's ${fmt((amt || 0) * headcount)} across your group of ${headcount}.`;
+    return `${donor} just added ${fmt(amt || 0)} to the trip fund. Spread across ${headcount} travelers, that's about ${fmt((amt || 0) / Math.max(headcount, 1))} more per person to play with.`;
+  }
+
+  async function autoAdvance(stepN: number) {
     try {
       const res = await fetch("/api/steps/auto-advance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId: group.id, stepN: poll.step_n }),
+        body: JSON.stringify({ groupId: group.id, stepN }),
       });
       const out = await res.json().catch(() => null);
       if (out?.advanced) {
-        setCompleted((c) => new Set([...c, poll.step_n]));
+        setCompleted((c) => new Set([...c, stepN]));
         if (out.nextStep) setCurrent(out.nextStep);
-        say(`Everyone answered! Step ${poll.step_n} locked in, and the group has been emailed the results.`);
+        say(`Everyone voted! Step ${stepN} locked in, and the group has been emailed the results.`);
+      } else if (out?.tie) {
+        say("Everyone has voted and it's a tie. The group has been emailed; votes stay open.");
+      } else if (out?.datesReady) {
+        say("Everyone has answered the dates. Results are on their way to the whole group.");
       }
     } catch { /* best-effort */ }
   }
@@ -162,12 +339,26 @@ export default function GroupFlow(props: {
 
   async function completeStep(n: number, msg?: string) {
     if (!isOrganizer) { say("Only the organizer can complete a step."); return; }
+    const stillTied = tiedPolls(n);
+    if (stillTied.length > 0) {
+      setTieBreak({ stepN: n, polls: stillTied });
+      say("There's a tie to break first. Your call.");
+      return;
+    }
     const supabase = supabaseBrowser();
     const { error } = await supabase
       .from("step_progress")
       .upsert({ group_id: group.id, step_n: n, completed_by: userId });
     if (error) { say("Couldn't save progress. Try again."); return; }
     setCompleted((c) => new Set([...c, n]));
+    if (n === 6) {
+      // Anyone who asked for a group quote becomes a Gatherwell lead, with home airports attached.
+      fetch("/api/leads/flight-quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId: group.id }),
+      }).catch(() => {});
+    }
     if (n < 9) {
       setCurrent(n + 1);
       notifyStep(n + 1, "opened");
@@ -279,15 +470,10 @@ export default function GroupFlow(props: {
       opts = [...pfDates].sort().map((d) => ({ label: fmtDateRange(d, nights), meta: null }));
       if (opts.length < 2) { say("Add at least two candidate dates with the calendar."); return; }
     } else {
-      opts = pfOpts
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map((l) => {
-          const [label, meta] = l.split("|").map((s) => s.trim());
-          return { label, meta: meta || null };
-        });
-      if (!q || opts.length < 2) { say("Add a question and at least two options, one per line."); return; }
+      opts = pfRows
+        .map((r) => ({ label: r.label.trim(), meta: r.meta.trim() || null }))
+        .filter((r) => r.label);
+      if (!q || opts.length < 2) { say("Add a question and at least two options."); return; }
     }
     const supabase = supabaseBrowser();
     const { data: poll, error } = await supabase
@@ -306,7 +492,7 @@ export default function GroupFlow(props: {
       id: poll.id, step_n: stepN, kind: pfKind, question: q,
       options: [...created].sort((a, b) => a.sort - b.sort), votes: [], dvotes: [],
     }]);
-    setPfQ(""); setPfOpts(""); setPfDates([]); setPfDateDraft(""); setPollFormStep(null); setPfKind("choice");
+    setPfQ(""); setPfRows([{ label: "", meta: "" }, { label: "", meta: "" }]); setPfDates([]); setPfDateDraft(""); setPollFormStep(null); setPfKind("choice");
     say("Poll added. Your group can vote now.");
   }
 
@@ -419,18 +605,22 @@ ${link}`,
       polls
         .filter((p) => p.step_n === n)
         .map((p) => {
-          if (p.kind === "dates") {
-            const dv = p.dvotes ?? [];
+          if (p.kind === "dates" || p.kind === "multi") {
+            const dv = (p.dvotes ?? []).filter((v) => p.kind === "multi" ? v.answer === "yes" : true);
             if (dv.length === 0) return null;
             const scored = p.options.map((o) => ({
               o,
-              yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").length,
-              maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").length,
+              yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").reduce((s, v) => s + w(v.user_id), 0),
+              maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").reduce((s, v) => s + w(v.user_id), 0),
             }));
             const best = scored.sort((a, b) => b.yes - a.yes || b.maybe - a.maybe)[0];
             return best && best.yes + best.maybe > 0 ? best.o.label : null;
           }
-          const counts = p.options.map((o) => ({ o, c: p.votes.filter((v) => v.option_id === o.id).length }));
+          const override = group.data?.decisions?.[p.id];
+          if (override) return p.options.find((o) => o.id === override)?.label ?? null;
+          const counts = p.options
+            .filter((o) => !o.label.toLowerCase().includes("flexible"))
+            .map((o) => ({ o, c: p.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0) }));
           const win = counts.sort((a, b) => b.c - a.c)[0];
           return win && win.c > 0 ? win.o.label : null;
         })
@@ -451,7 +641,11 @@ ${link}`,
     if (budget || completed.has(4)) {
       items.push({ label: "Budget", value: `${fmt(budgetTotal(budget ?? defaultBudget()))} per person`, locked: completed.has(4) });
     }
-    push("Destination", 5);
+    if (group.data?.destination) {
+      items.push({ label: "Destination", value: group.data.destination, locked: completed.has(5) });
+    } else {
+      push("Destination", 5);
+    }
     push("Home base", 7);
     push("Activities", 8);
     return items;
@@ -461,11 +655,12 @@ ${link}`,
   function dateBlock(poll: Poll) {
     const closed = completed.has(poll.step_n);
     const dv = poll.dvotes ?? [];
+    const wsum = (arr: { user_id: string }[]) => arr.reduce((s, v) => s + w(v.user_id), 0);
     const scored = poll.options.map((o) => ({
       o,
-      yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").length,
-      maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").length,
-      no: dv.filter((v) => v.option_id === o.id && v.answer === "no").length,
+      yes: wsum(dv.filter((v) => v.option_id === o.id && v.answer === "yes")),
+      maybe: wsum(dv.filter((v) => v.option_id === o.id && v.answer === "maybe")),
+      no: wsum(dv.filter((v) => v.option_id === o.id && v.answer === "no")),
     }));
     const best = [...scored].sort((a, b) => b.yes - a.yes || b.maybe - a.maybe || a.no - b.no)[0];
     const answeredAll = members.filter((m) =>
@@ -522,13 +717,74 @@ ${link}`,
     );
   }
 
+  function multiBlock(poll: Poll) {
+    const closed = completed.has(poll.step_n);
+    const dv = (poll.dvotes ?? []).filter((v) => v.answer === "yes");
+    const voted = new Set(dv.map((v) => v.user_id)).size;
+    return (
+      <div key={poll.id} style={{ marginBottom: 26 }}>
+        <h3 style={{ fontSize: 18, marginBottom: 6 }}>
+          {poll.question}
+          {closed && <span className="decided">Decided</span>}
+        </h3>
+        <p className="foot-note" style={{ marginTop: 0, marginBottom: 12 }}>
+          Pick everything you&apos;d join. Activities aren&apos;t rivals; vote for all of them if you want.
+        </p>
+        {poll.options.map((o) => {
+          const count = dv.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0);
+          const mine = dv.some((v) => v.option_id === o.id && v.user_id === userId);
+          return (
+            <div
+              key={o.id}
+              className={`poll-opt ${mine ? "sel" : ""} ${closed ? "closed" : ""}`}
+              onClick={() => toggleActivity(poll, o.id)}
+            >
+              <span className="name">{mine ? "✓ " : ""}{o.label}</span>
+              {count > 0 && <span className="votes">{count} in</span>}
+              {o.meta && <span className="meta">{o.meta}</span>}
+              {count > 0 && (
+                <div className="vote-track">
+                  <div className="vote-fill" style={{ width: `${Math.min((count / Math.max(headcount, 1)) * 100, 100)}%` }} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!closed && (
+          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+            <input
+              className="pf-input"
+              style={{ marginBottom: 0 }}
+              placeholder="Suggest your own: e.g. Sunset horseback ride"
+              value={suggest}
+              onChange={(e) => setSuggest(e.target.value)}
+            />
+            <button className="btn btn-outline btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => suggestActivity(poll)}>
+              Add idea
+            </button>
+          </div>
+        )}
+        <p className="foot-note">
+          {closed ? "Anchors locked. The 60/40 rule protects the rest." : `${voted} of ${members.length} have picked so far. Couples count as two.`}
+        </p>
+      </div>
+    );
+  }
+
   function pollBlock(poll: Poll) {
     if (poll.kind === "dates") return dateBlock(poll);
-    const total = poll.votes.length;
+    if (poll.kind === "multi") return multiBlock(poll);
+    const total = poll.votes.reduce((s, v) => s + w(v.user_id), 0);
     const mine = poll.votes.find((v) => v.user_id === userId)?.option_id;
     const isBudget = poll.kind === "budget";
-    const closed = completed.has(poll.step_n);
-    const max = Math.max(...poll.options.map((o) => poll.votes.filter((v) => v.option_id === o.id).length), 0);
+    const closed = completed.has(poll.step_n) && poll.step_n !== 6;
+    const override = group.data?.decisions?.[poll.id];
+    const max = Math.max(
+      ...poll.options
+        .filter((o) => !o.label.toLowerCase().includes("flexible"))
+        .map((o) => poll.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0)),
+      0
+    );
     return (
       <div key={poll.id} style={{ marginBottom: 26 }}>
         <h3 style={{ fontSize: 18, marginBottom: 10 }}>
@@ -544,8 +800,9 @@ ${link}`,
           )}
         </h3>
         {poll.options.map((o) => {
-          const count = poll.votes.filter((v) => v.option_id === o.id).length;
-          const win = total > 0 && count === max && max > 0;
+          const count = poll.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0);
+          const isFlex = o.label.toLowerCase().includes("flexible");
+          const win = override ? o.id === override : total > 0 && !isFlex && count === max && max > 0;
           return (
             <div
               key={o.id}
@@ -567,8 +824,8 @@ ${link}`,
           {closed
             ? "This poll closed when the step was completed. The winning option is locked in."
             : isBudget
-            ? "Budget votes are anonymous: everyone sees the totals, never who picked what."
-            : `${total} of ${members.length} travelers have voted.`}
+            ? "Budget votes are anonymous: everyone sees the totals, never who picked what. Couples count twice."
+            : `${new Set(poll.votes.map((v) => v.user_id)).size} of ${members.length} have voted. Couples count as two votes.`}
         </p>
       </div>
     );
@@ -576,7 +833,7 @@ ${link}`,
 
   function stepPolls(n: number) {
     const blocks = polls.filter((p) => p.step_n === n).map(pollBlock);
-    const locked = completed.has(n);
+    const locked = completed.has(n) && n !== 6;
     return (
       <>
         {blocks}
@@ -642,13 +899,27 @@ ${link}`,
                   )}
                 </>
               ) : (
-                <textarea
-                  className="pf-input"
-                  rows={4}
-                  placeholder={"One option per line. Add a detail after a | if you like:\nBig villa | everyone under one roof\nResort rooms"}
-                  value={pfOpts}
-                  onChange={(e) => setPfOpts(e.target.value)}
-                />
+                <>
+                  {pfRows.map((r, i) => (
+                    <div key={i} className="opt-row">
+                      <input
+                        className="pf-input"
+                        placeholder={`Option ${i + 1}, e.g. Riviera Maya, Mexico`}
+                        value={r.label}
+                        onChange={(e) => setPfRows((rs) => rs.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                      />
+                      <input
+                        className="pf-input"
+                        placeholder="Short description (optional)"
+                        value={r.meta}
+                        onChange={(e) => setPfRows((rs) => rs.map((x, j) => (j === i ? { ...x, meta: e.target.value } : x)))}
+                      />
+                    </div>
+                  ))}
+                  <button className="btn btn-outline btn-sm" style={{ marginBottom: 10 }} onClick={() => setPfRows((rs) => [...rs, { label: "", meta: "" }])}>
+                    + Add another option
+                  </button>
+                </>
               )}
               <div className="step-actions" style={{ marginTop: 12 }}>
                 <button className="btn btn-primary btn-sm" onClick={() => createPoll(n)}>Create poll</button>
@@ -675,6 +946,32 @@ ${link}`,
       <>
         <div className="step-eyebrow">Step {n} of 9 · The Gatherwell Method</div>
         <h2>{st.t}</h2>
+        {isConcierge && (
+          <div className="conc-panel">
+            <div className="conc-head">Concierge · your advisor is on this step</div>
+            {conciergeMsg === null ? (
+              <div className="step-actions" style={{ marginTop: 8 }}>
+                <button className="btn btn-gold btn-sm" onClick={() => setConciergeMsg("")}>Email your advisor</button>
+                <a className="btn btn-outline btn-sm" href="tel:+18886643090">Call (888) 664-3090</a>
+              </div>
+            ) : (
+              <>
+                <textarea
+                  className="pf-input"
+                  rows={3}
+                  style={{ marginTop: 10 }}
+                  placeholder={`Ask anything about ${st.t.toLowerCase()}. Your advisor sees your group's full context.`}
+                  value={conciergeMsg}
+                  onChange={(e) => setConciergeMsg(e.target.value)}
+                />
+                <div className="step-actions" style={{ marginTop: 0 }}>
+                  <button className="btn btn-gold btn-sm" onClick={() => askConcierge(n)}>Send with priority</button>
+                  <button className="btn btn-outline btn-sm" onClick={() => setConciergeMsg(null)}>Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </>
     );
   }
@@ -793,6 +1090,36 @@ ${link}`,
                 )}
               </div>
             )}
+            {isOrganizer && (
+              <div className="bw">
+                <h3>Where does your group talk?</h3>
+                <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                  Paste your group&apos;s WhatsApp invite link (and a video-call link if you use one). A &quot;Discuss&quot; button will appear in group emails whenever a decision needs talking out.
+                </p>
+                <input
+                  className="pf-input"
+                  placeholder="WhatsApp group invite link, e.g. https://chat.whatsapp.com/..."
+                  value={discuss.whatsapp ?? ""}
+                  onChange={(e) => setDiscuss({ ...discuss, whatsapp: e.target.value })}
+                />
+                <input
+                  className="pf-input"
+                  placeholder="Video call link (Zoom, FaceTime, Meet) · optional"
+                  value={discuss.video ?? ""}
+                  onChange={(e) => setDiscuss({ ...discuss, video: e.target.value })}
+                />
+                <button className="btn btn-outline btn-sm" onClick={saveDiscuss}>Save links</button>
+              </div>
+            )}
+            {isSolo && headcount >= 8 && (
+              <div className="callout">
+                <b>Your group outgrew the Solo plan</b>
+                Solo covers up to 8 travelers. Upgrade to Group for unlimited travelers, Boost the Budget, and group flight quotes.
+                <div style={{ marginTop: 10 }}>
+                  <a className="btn btn-primary btn-sm" href="/api/stripe/checkout?plan=group">Upgrade to Group</a>
+                </div>
+              </div>
+            )}
             <div className="callout">
               <b>Method rule: no planning around a “maybe”</b>
               Pick a commitment device with your group: a small deposit, a reply-by date, or the
@@ -841,7 +1168,7 @@ ${link}`,
             {(() => {
               const b = budget ?? defaultBudget();
               const editable = isOrganizer && !completed.has(4);
-              const n = members.length;
+              const n = headcount;
               const upd = (k: keyof Budget, v: string) =>
                 setBudget({ ...b, [k]: Math.max(0, parseInt(v.replace(/\D/g, "") || "0", 10)) });
               return (
@@ -883,6 +1210,73 @@ ${link}`,
                 </div>
               );
             })()}
+            {!completed.has(4) && (
+              isSolo ? (
+                <div className="callout" style={{ opacity: 0.85 }}>
+                  <b>🔒 Boost the Budget · Group plan feature</b>
+                  On the Group plan, any traveler can add funds to the trip or cover it entirely, announced to the group on their terms.
+                  <div style={{ marginTop: 10 }}>
+                    <a className="btn btn-outline btn-sm" href="/api/stripe/checkout?plan=group">Upgrade to Group</a>
+                  </div>
+                </div>
+              ) : (
+                <div className="bw">
+                  <h3>Feeling generous?</h3>
+                  <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Any traveler can quietly raise the trip&apos;s budget, or take care of the whole thing.
+                  </p>
+                  {!boostOpen ? (
+                    <button className="btn btn-outline btn-sm" onClick={() => setBoostOpen(true)}>I&apos;d like to help fund this trip</button>
+                  ) : (
+                    <>
+                      {(() => {
+                        const b = budget ?? defaultBudget();
+                        return (
+                          <p className="bw-note" style={{ marginTop: 0 }}>
+                            For your group of {headcount}: the current budget totals {fmt(budgetTotal(b) * headcount)} ({fmt(budgetTotal(b))} per person).
+                          </p>
+                        );
+                      })()}
+                      <div className="tpl-chips" style={{ marginBottom: 10 }}>
+                        <button className={`tpl-chip ${boost.mode === "lump" ? "on" : ""}`} onClick={() => setBoost({ ...boost, mode: "lump", confirm: false })}>Add a lump sum</button>
+                        <button className={`tpl-chip ${boost.mode === "perPerson" ? "on" : ""}`} onClick={() => setBoost({ ...boost, mode: "perPerson", confirm: false })}>Add $ per traveler</button>
+                        <button className={`tpl-chip ${boost.mode === "cover" ? "on" : ""}`} onClick={() => setBoost({ ...boost, mode: "cover", confirm: false })}>Cover the whole trip</button>
+                      </div>
+                      <input
+                        className="pf-input"
+                        inputMode={boost.mode === "cover" ? "text" : "numeric"}
+                        placeholder={boost.mode === "cover" ? 'Type COVER to confirm' : boost.mode === "perPerson" ? "Amount per traveler, e.g. 150" : "Amount, e.g. 2000"}
+                        value={boost.amount}
+                        onChange={(e) => setBoost({ ...boost, amount: e.target.value, confirm: false })}
+                      />
+                      <div className="tpl-chips" style={{ marginBottom: 12 }}>
+                        <button className={`tpl-chip ${!boost.anonymous ? "on" : ""}`} onClick={() => setBoost({ ...boost, anonymous: false })}>Share my name</button>
+                        <button className={`tpl-chip ${boost.anonymous ? "on" : ""}`} onClick={() => setBoost({ ...boost, anonymous: true })}>Keep me anonymous</button>
+                      </div>
+                      {boost.mode === "cover" && (
+                        <div className="callout" style={{ margin: "0 0 12px" }}>
+                          <b>Covering the whole trip?</b>
+                          Our full-service team can plan and book every detail, so you only write one check.{" "}
+                          <a href="https://gatherwelltravel.com" target="_blank" rel="noopener noreferrer" style={{ color: "var(--terracotta)", fontWeight: 600 }}>Talk to Gatherwell Travel</a>
+                        </div>
+                      )}
+                      <div className="callout sage" style={{ margin: "0 0 12px" }}>
+                        <b>The group will receive exactly this message:</b>
+                        {boostPreview()}
+                      </div>
+                      <div className="step-actions" style={{ marginTop: 0 }}>
+                        {!boost.confirm ? (
+                          <button className="btn btn-primary btn-sm" onClick={() => setBoost({ ...boost, confirm: true })}>Continue</button>
+                        ) : (
+                          <button className="btn btn-primary btn-sm" onClick={submitBoost}>Confirm and tell the group</button>
+                        )}
+                        <button className="btn btn-outline btn-sm" onClick={() => { setBoostOpen(false); setBoost({ mode: "lump", amount: "", anonymous: false, confirm: false }); }}>Cancel</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )
+            )}
             <div className="callout teal">
               <b>Track it in the Gatherwell Budgeting app</b>
               Once adopted, your budget becomes the yardstick for every later choice.
@@ -911,13 +1305,13 @@ ${link}`,
                   fname: "Group-Budget.csv",
                   body:
 `GROUP BUDGET · ${group.name}
-Travelers: ${members.length}
+Travelers: ${headcount}
 
 ${"Category".padEnd(16)}${"Per Person".padEnd(13)}Group Total
-${rows.map(([c, v]) => c.padEnd(16) + fmt(v).padEnd(13) + fmt(v * members.length)).join("\n")}`,
+${rows.map(([c, v]) => c.padEnd(16) + fmt(v).padEnd(13) + fmt(v * headcount)).join("\n")}`,
                   fdata:
 `Category,Per Person,Group Total\n` +
-rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * members.length)}"`).join("\n"),
+rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * headcount)}"`).join("\n"),
                 });
               }}>Preview budget spreadsheet</button>
             </div>
@@ -928,6 +1322,19 @@ rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * members.length)}"`).join("\n
           <>
             {header(5)}
             <p className="lead">Now, and only now, the group picks where. Vote from a short list that fits the locked vision, dates, and budget.</p>
+            {isOrganizer && !completed.has(5) && (
+              <div className="callout" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <span><b>Already decided?</b> Skip the vote and enter it.</span>
+                <input
+                  className="pf-input"
+                  style={{ marginBottom: 0, maxWidth: 240, flex: "1 1 180px" }}
+                  placeholder="e.g. Algarve, Portugal"
+                  value={destSkip}
+                  onChange={(e) => setDestSkip(e.target.value)}
+                />
+                <button className="btn btn-outline btn-sm" onClick={skipDestination}>Lock it in</button>
+              </div>
+            )}
             {stepPolls(5)}
             <div className="callout sage">
               <b>Why the shortlist stays short</b>
@@ -949,14 +1356,15 @@ rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * members.length)}"`).join("\n
             <p className="foot-note">
               International fares have historically bottomed out around 2–6 months before departure; domestic 1–3 months out averages roughly 25% below peak. Airfare is dynamic and no window is guaranteed: this improves your odds, it is not a promise.
             </p>
+            {stepPolls(6)}
             <div className="partner-card">
-              <div className="lg" style={{ background: "#1E3A8A" }}>E</div>
-              <div><h4>Book through Gatherwell&apos;s Expedia shop <span className="badge">Partner link</span></h4><p>Everyone books in one place with your trip dates.</p></div>
-              <a className="btn btn-sage btn-sm" href="https://expedia.ca/shop/gatherwell-travel" target="_blank" rel="noopener noreferrer">Open</a>
+              <div className="lg" style={{ background: "#0770E3" }}>S</div>
+              <div><h4>Watch your route on Skyscanner</h4><p>Search your route and dates, then tap &quot;Get price alerts.&quot; Skyscanner emails you when the fare moves, so the group buys on a signal, not a hunch.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://www.skyscanner.com" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
             <div className="partner-card">
               <div className="lg" style={{ background: "#4A3F35" }}>G</div>
-              <div><h4>Have Gatherwell ticket the group <span className="badge">Upgrade</span></h4><p>Our advisors hold group space and ticket everyone together. Ideal for 10+.</p></div>
+              <div><h4>Have Gatherwell ticket the group <span className="badge">$50/person</span></h4><p>Flat $50 per traveler, matching online pricing: advisors don&apos;t earn on flights. We hold group space and ticket everyone together. Ideal for 10+ from one city.</p></div>
               <button className="btn btn-outline btn-sm" onClick={() => setContactOpen(true)}>Ask us</button>
             </div>
             <div className="step-actions">
@@ -1046,8 +1454,8 @@ BOOKING PATH
                 fname: "Master-Itinerary.txt",
                 body:
 `${group.name.toUpperCase()} · MASTER ITINERARY
-Travelers: ${members.length}
-Budget: ${fmt(budgetTotal(budget ?? defaultBudget()))} per person · ${fmt(budgetTotal(budget ?? defaultBudget()) * members.length)} group total
+Travelers: ${headcount}
+Budget: ${fmt(budgetTotal(budget ?? defaultBudget()))} per person · ${fmt(budgetTotal(budget ?? defaultBudget()) * headcount)} group total
 
 Assembled from your group's winning votes:
 ${polls.map((p) => {
@@ -1056,7 +1464,7 @@ ${polls.map((p) => {
   return `  Step ${p.step_n}: ${p.question}\n    → ${win && win.c > 0 ? win.o.label : "(no votes yet)"}`;
 }).join("\n")}
 
-Booked through: Expedia · GetYourGuide · Rental Escapes · Luxury Rentals
+Booked through: Gatherwell partners · GetYourGuide · Rental Escapes · Luxury Rentals
 Need a human? gatherwelltravel.com`,
               })}>Itinerary preview</button>
               <button className="btn btn-outline btn-sm" onClick={() => {
@@ -1064,18 +1472,23 @@ Need a human? gatherwelltravel.com`,
                 const total = budgetTotal(b);
                 const dep = Math.round(total * 0.25);
                 const bal = total - dep;
+                const rows2 = members.map((m) => {
+                  const seats = m.meta?.answering_for === "couple" ? 2 : 1;
+                  const who = seats === 2 && m.meta?.partner_name ? `${m.name} & ${m.meta.partner_name}` : m.name;
+                  return { who, dep: dep * seats, bal: bal * seats };
+                });
                 setModal({
                   title: "Payment Schedule",
                   fname: "Payment-Schedule.csv",
                   body:
 `PAYMENT SCHEDULE · ${group.name}
-Per person: ${fmt(total)} · Group total: ${fmt(total * members.length)}
+Per person: ${fmt(total)} · Group total: ${fmt(total * headcount)}
 
-${"Traveler".padEnd(20)}${"Deposit (25%)".padEnd(16)}${"Balance".padEnd(11)}Balance Due
-${members.map((m) => m.name.padEnd(20) + fmt(dep).padEnd(16) + fmt(bal).padEnd(11) + "60 days before departure").join("\n")}`,
+${"Traveler".padEnd(24)}${"Deposit (25%)".padEnd(16)}${"Balance".padEnd(11)}Balance Due
+${rows2.map((r) => r.who.padEnd(24) + fmt(r.dep).padEnd(16) + fmt(r.bal).padEnd(11) + "60 days before departure").join("\n")}`,
                   fdata:
 `Traveler,Deposit (25%),Balance,Balance Due\n` +
-members.map((m) => `"${m.name}","${fmt(dep)}","${fmt(bal)}","60 days before departure"`).join("\n"),
+rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before departure"`).join("\n"),
                 });
               }}>Payment schedule</button>
             </div>
@@ -1175,6 +1588,85 @@ members.map((m) => `"${m.name}","${fmt(dep)}","${fmt(bal)}","60 days before depa
                 <button className="btn btn-primary btn-sm" onClick={() => download(modal.fname, modal.fdata ?? modal.body)}>Download file</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {profileOpen && (
+        <div className="modal-bg">
+          <div className="modal">
+            <h3>Before you vote: who are you?</h3>
+            <p style={{ color: "var(--ink-soft)", fontSize: 14.5, lineHeight: 1.7, marginBottom: 14 }}>
+              Thirty seconds, once. It makes every vote and every dollar figure accurate.
+            </p>
+            <label className="pf-label">Your name</label>
+            <input className="pf-input" placeholder="e.g. Julie" value={pv.name ?? ""} onChange={(e) => setPv({ ...pv, name: e.target.value })} />
+            <label className="pf-label">Are you answering…</label>
+            <div className="tpl-chips" style={{ marginBottom: 12 }}>
+              <button className={`tpl-chip ${pv.answering_for === "solo" ? "on" : ""}`} onClick={() => setPv({ ...pv, answering_for: "solo" })}>Just for me</button>
+              <button className={`tpl-chip ${pv.answering_for === "couple" ? "on" : ""}`} onClick={() => setPv({ ...pv, answering_for: "couple" })}>For us as a couple</button>
+              <button className={`tpl-chip ${pv.answering_for === "partner_separate" ? "on" : ""}`} onClick={() => setPv({ ...pv, answering_for: "partner_separate" })}>My partner answers separately</button>
+            </div>
+            {pv.answering_for === "couple" && (
+              <>
+                <label className="pf-label">Your partner&apos;s name (your votes will count for both of you)</label>
+                <input className="pf-input" placeholder="Partner's name" value={pv.partner_name ?? ""} onChange={(e) => setPv({ ...pv, partner_name: e.target.value })} />
+              </>
+            )}
+            {pv.answering_for === "partner_separate" && (
+              <>
+                <label className="pf-label">Your partner&apos;s name (so the organizer knows who&apos;s still to join)</label>
+                <input className="pf-input" placeholder="Partner's name" value={pv.partner_name ?? ""} onChange={(e) => setPv({ ...pv, partner_name: e.target.value })} />
+              </>
+            )}
+            <label className="pf-label">Home airport</label>
+            <input className="pf-input" placeholder="e.g. YYZ, LAX, JFK" value={pv.home_airport ?? ""} onChange={(e) => setPv({ ...pv, home_airport: e.target.value })} />
+            <label className="pf-label">Packing style</label>
+            <div className="tpl-chips" style={{ marginBottom: 12 }}>
+              <button className={`tpl-chip ${pv.bags === "carryon" ? "on" : ""}`} onClick={() => setPv({ ...pv, bags: "carryon" })}>Carry-on only</button>
+              <button className={`tpl-chip ${pv.bags === "checked" ? "on" : ""}`} onClick={() => setPv({ ...pv, bags: "checked" })}>I check a bag</button>
+            </div>
+            <label className="pf-label">Cabin comfort</label>
+            <div className="tpl-chips" style={{ marginBottom: 16 }}>
+              <button className={`tpl-chip ${pv.cabin === "economy" ? "on" : ""}`} onClick={() => setPv({ ...pv, cabin: "economy" })}>Economy</button>
+              <button className={`tpl-chip ${pv.cabin === "premium" ? "on" : ""}`} onClick={() => setPv({ ...pv, cabin: "premium" })}>Premium economy</button>
+              <button className={`tpl-chip ${pv.cabin === "business" ? "on" : ""}`} onClick={() => setPv({ ...pv, cabin: "business" })}>Business</button>
+            </div>
+            <div className="step-actions">
+              <button className="btn btn-primary" onClick={saveProfile}>Save and start voting</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tieBreak && (
+        <div className="modal-bg">
+          <div className="modal">
+            <button className="close" onClick={() => setTieBreak(null)}>×</button>
+            <h3>Break the tie</h3>
+            <p style={{ color: "var(--ink-soft)", fontSize: 14.5, lineHeight: 1.7, marginBottom: 16 }}>
+              The group is split, so the call is yours. Pick the winner for each tied poll; your choice is recorded as the decision.
+            </p>
+            {tieBreak.polls.map((p) => {
+              const counts = p.options
+                .filter((o) => !o.label.toLowerCase().includes("flexible"))
+                .map((o) => ({ o, c: p.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0) }))
+                .sort((a, b) => b.c - a.c);
+              const top = counts.filter((x) => x.c === counts[0].c);
+              return (
+                <div key={p.id} style={{ marginBottom: 18 }}>
+                  <h3 style={{ fontSize: 16, marginBottom: 8 }}>{p.question}</h3>
+                  {top.map(({ o, c }) => (
+                    <div key={o.id} className="poll-opt" onClick={() => declareWinner(p.id, o.id)}>
+                      <span className="name">{o.label}</span>
+                      <span className="votes">{c} votes</span>
+                      {o.meta && <span className="meta">{o.meta}</span>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            <p className="foot-note">After the ties are broken, complete the step again.</p>
           </div>
         </div>
       )}
