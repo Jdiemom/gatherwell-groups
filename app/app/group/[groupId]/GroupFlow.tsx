@@ -343,8 +343,8 @@ rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * members.length)}"`).join("\n
             </p>
             <div className="partner-card">
               <div className="lg" style={{ background: "#1E3A8A" }}>E</div>
-              <div><h4>Book through Expedia <span className="badge">Partner link</span></h4><p>Everyone books in one place with your trip dates.</p></div>
-              <a className="btn btn-sage btn-sm" href="https://www.expedia.com" target="_blank" rel="noopener noreferrer">Open</a>
+              <div><h4>Book through Gatherwell&apos;s Expedia shop <span className="badge">Partner link</span></h4><p>Everyone books in one place with your trip dates.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://expedia.ca/shop/gatherwell-travel" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
             <div className="partner-card">
               <div className="lg" style={{ background: "#4A3F35" }}>G</div>
@@ -378,9 +378,19 @@ BOOKING PATH
             <p className="lead">One house changes a group trip&apos;s chemistry. Compare true per-person cost, then book through our partners.</p>
             {stepPolls(7)}
             <div className="partner-card">
-              <div className="lg" style={{ background: "#0E9488" }}>R</div>
-              <div><h4>Rental Escapes &amp; Luxury Rentals <span className="badge">White label</span></h4><p>Gatherwell-branded booking with concierge included.</p></div>
-              <a className="btn btn-sage btn-sm" href="https://gatherwelltravel.com" target="_blank" rel="noopener noreferrer">Browse homes</a>
+              <div className="lg" style={{ background: "#0E9488" }}>V</div>
+              <div><h4>Villa collection <span className="badge">Gatherwell exclusive</span></h4><p>2,500+ luxury villas worldwide. Booking requests come straight to our team.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://villa-info.net" target="_blank" rel="noopener noreferrer">Browse villas</a>
+            </div>
+            <div className="partner-card">
+              <div className="lg" style={{ background: "#B08A3E" }}>L</div>
+              <div><h4>Luxury villa rentals <span className="badge">Gatherwell exclusive</span></h4><p>Top-tier homes with concierge included.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://www.luxury-villa-rentals.com" target="_blank" rel="noopener noreferrer">Browse homes</a>
+            </div>
+            <div className="partner-card">
+              <div className="lg" style={{ background: "#4A3F35" }}>C</div>
+              <div><h4>Prefer a ship to a villa? <span className="badge">Gatherwell</span></h4><p>Group cruises through our luxury cruise partners.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://gatherwelltravel.com/luxury-cruises" target="_blank" rel="noopener noreferrer">See cruises</a>
             </div>
             <div className="step-actions">{completeBtn(7, "Book the Winner →", true, "Home base chosen. Group perks applied.")}</div>
           </>
@@ -394,6 +404,16 @@ BOOKING PATH
             <div className="callout sage">
               <b>The 60/40 rule</b>
               A few shared anchor experiences, plenty of unscheduled space. Over-scheduled groups come home tired; under-scheduled ones never leave the pool.
+            </div>
+            <div className="partner-card">
+              <div className="lg" style={{ background: "#FF5533" }}>G</div>
+              <div><h4>Book activities on GetYourGuide <span className="badge">Partner link</span></h4><p>Reserve the winning experiences. Free cancellation on most.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://www.getyourguide.com?partner_id=J0NPR1G&cmp=share_to_earn" target="_blank" rel="noopener noreferrer">Open</a>
+            </div>
+            <div className="partner-card">
+              <div className="lg" style={{ background: "#1C5D8C" }}>S</div>
+              <div><h4>Cruising? Book shore excursions <span className="badge">Partner link</span></h4><p>Port-by-port excursions for the whole group.</p></div>
+              <a className="btn btn-sage btn-sm" href="https://www.shoreexcursionsgroup.com/?id=1948366&source=advisorseed" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
             <div className="step-actions">{completeBtn(8, "Anchor the Winners →", true, "Activities anchored. Group rates locked through partners.")}</div>
           </>
