@@ -61,7 +61,7 @@ export default async function GroupPage({ params }: { params: Promise<{ groupId:
       members={(members ?? []).map((m) => {
         const p = m.profiles as unknown as { name: string | null; email: string | null } | null;
         const meta = (m as unknown as { meta?: Record<string, string> }).meta ?? {};
-        return { user_id: m.user_id, role: m.role, name: p?.name || p?.email?.split("@")[0] || "Traveler", meta };
+        return { user_id: m.user_id, role: m.role, name: p?.name || p?.email?.split("@")[0] || "Traveler", rawName: p?.name ?? null, meta };
       })}
       completed={(progress ?? []).map((p) => p.step_n)}
       polls={(polls ?? []).map((p) => ({

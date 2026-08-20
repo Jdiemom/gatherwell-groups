@@ -7,8 +7,7 @@ function emailHtml(heading: string, body: string, ctaUrl: string, ctaText: strin
   <tr><td align="center">
     <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
       <tr><td align="center" style="padding-bottom:24px;">
-        <div style="font-size:26px;color:#332E29;">Groups <span style="color:#B4531A;">by Gatherwell</span></div>
-        <div style="font-family:Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:3px;color:#B08A3E;margin-top:4px;">GROUP TRAVEL, SOLVED</div>
+        <img src="https://www.groupsbygatherwell.com/groups-logo.png" alt="Groups by Gatherwell" width="190" style="display:block;margin:0 auto;max-width:190px;"/>
       </td></tr>
       <tr><td style="background-color:#FFFFFF;border:1px solid #E3DACA;border-radius:14px;padding:36px 32px;">
         <div style="font-size:22px;color:#332E29;margin-bottom:12px;">${heading}</div>

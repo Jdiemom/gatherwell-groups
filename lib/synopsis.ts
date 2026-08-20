@@ -6,7 +6,12 @@ type VisionPoll = {
   votes: { option_id: string }[];
 };
 
-export function tripVisionHtml(groupName: string, polls: VisionPoll[], travelers: number): string {
+export function tripVisionHtml(
+  groupName: string,
+  polls: VisionPoll[],
+  travelers: number,
+  people?: { name: string; picks: string[] }[]
+): string {
   const results = polls
     .map((p) => {
       const counts = p.options
@@ -98,6 +103,41 @@ export function tripVisionHtml(groupName: string, polls: VisionPoll[], travelers
     )
     .join("");
 
+  // Named section + clusters: who's the engine room, who's the anchor
+  let peopleHtml = "";
+  if (people && people.length > 1) {
+    const activeWords = ["adventure", "full days", "nightlife", "dinners out", "active", "hike", "excursion"];
+    const calmWords = ["relax", "slow", "early nights", "rest", "reconnect", "cozy"];
+    const scoreOf = (picks: string[]) => {
+      const t = picks.join(" ").toLowerCase();
+      let s = 0;
+      for (const w2 of activeWords) if (t.includes(w2)) s++;
+      for (const w2 of calmWords) if (t.includes(w2)) s--;
+      return s;
+    };
+    const engine = people.filter((p) => scoreOf(p.picks) > 0).map((p) => p.name);
+    const anchors = people.filter((p) => scoreOf(p.picks) < 0).map((p) => p.name);
+    const whoRows = people
+      .map(
+        (p) =>
+          `<tr>
+            <td style="padding:7px 0;border-bottom:1px solid #F1EADC;font-size:14px;color:#332E29;white-space:nowrap;vertical-align:top;"><b>${p.name}</b></td>
+            <td style="padding:7px 0 7px 14px;border-bottom:1px solid #F1EADC;font-size:13px;color:#6B6259;">${p.picks.map(clean).join(" · ") || "no votes yet"}</td>
+          </tr>`
+      )
+      .join("");
+    const clusterLine =
+      engine.length > 0 && anchors.length > 0
+        ? `<p style="margin:14px 0 0;">Your engine room: <b>${engine.join(", ")}</b>. Your anchors: <b>${anchors.join(", ")}</b>. That's not a conflict, it's a shift schedule: mornings belong to the engine room, afternoons converge, and evenings alternate. Build the days that way and everyone gets their trip.</p>`
+        : engine.length > 0
+        ? `<p style="margin:14px 0 0;">This whole crew leans energetic. Book the big days early; the rest sorts itself.</p>`
+        : anchors.length > 0
+        ? `<p style="margin:14px 0 0;">This crew came to exhale. Protect the empty hours; they're the itinerary.</p>`
+        : "";
+    peopleHtml = `<div style="font-family:Georgia,serif;font-size:16px;color:#332E29;margin:22px 0 10px;">Who said what</div>
+      <table cellpadding="0" cellspacing="0" width="100%">${whoRows}</table>${clusterLine}`;
+  }
+
   return `
     <div style="border-left:3px solid #B08A3E;background:#FCF7EA;padding:20px 22px;margin:0 0 24px;">
       <div style="font-family:Georgia,serif;font-size:18px;color:#332E29;margin-bottom:6px;">Your Trip Vision</div>
@@ -107,5 +147,6 @@ export function tripVisionHtml(groupName: string, polls: VisionPoll[], travelers
     <p style="margin:0 0 14px;">${characterLine}</p>
     ${tensionHtml}
     <p style="margin:0 0 14px;">Every group trip has the same real enemy, and it is not disagreement, it is drift: the plan that stalls in the chat until the good dates are gone and the good houses are booked. Your group has already beaten the first stage of it just by voting.</p>
-    <p style="margin:0;">The dream is on the record now. Next comes the part most groups never reach: putting dates on it. The next step is open, and this trip is worth taking.</p>`;
+    ${peopleHtml}
+    <p style="margin:14px 0 0;">The dream is on the record now. Next comes the part most groups never reach: putting dates on it. The next step is open, and this trip is worth taking.</p>`;
 }

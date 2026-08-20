@@ -50,6 +50,13 @@ function LoginForm() {
           </div>
         ) : (
           <form className="wl-card card" onSubmit={submit}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/groups-logo.png"
+              alt=""
+              style={{ display: "block", margin: "0 auto 18px", maxWidth: 190, width: "100%" }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
             <div className="field">
               <label htmlFor="li-email">Email</label>
               <input

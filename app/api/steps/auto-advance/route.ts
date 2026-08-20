@@ -64,12 +64,17 @@ export async function POST(request: NextRequest) {
     const m = members.find((x) => x.user_id === uid);
     return m?.profiles?.name || m?.profiles?.email?.split("@")[0] || "Traveler";
   };
-  const headcount = members.reduce((s, m) => s + (m.meta?.answering_for === "couple" ? 2 : 1), 0);
+  const headcount = members.reduce(
+    (s, m) => s + (m.meta?.answering_for === "couple" ? 2 : 1) + ((m.meta as { kids?: number } | null)?.kids ?? 0),
+    0
+  );
   const url = `${request.nextUrl.origin}/app/group/${groupId}`;
   const discussUrl = gdata.discuss?.whatsapp || null;
 
-  /* ---------- participation ---------- */
-  const everyoneVoted = polls.every((p) => {
+  /* ---------- participation (polls with a recorded decision are already settled) ---------- */
+  const gdataEarly: GroupData = (group.data as GroupData) ?? {};
+  const activePolls = polls.filter((p) => !gdataEarly.decisions?.[p.id]);
+  const everyoneVoted = activePolls.every((p) => {
     if (p.kind === "dates") {
       return memberIds.every((id) => p.poll_options.every((o) => (p.date_votes ?? []).some((v) => v.user_id === id && v.option_id === o.id)));
     }
@@ -170,8 +175,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ advanced: false, datesReady: true });
   }
 
-  /* ---------- ties block auto-lock ---------- */
-  const tied = polls.filter((p) => p.kind === "choice" && rankedForWinner(p).tie);
+  /* ---------- ties block auto-lock (budget votes tie too; still anonymous) ---------- */
+  const tied = activePolls.filter((p) => (p.kind === "choice" || p.kind === "budget") && rankedForWinner(p).tie);
   if (tied.length > 0) {
     if (notified[`tie${n}`] !== sig) {
       const tieHtml = tied.map((p) => {
@@ -206,7 +211,20 @@ export async function POST(request: NextRequest) {
       options: p.poll_options,
       votes: (p.votes ?? []).flatMap((v) => Array(weight(v.user_id)).fill({ option_id: v.option_id })),
     }));
-    extraHtml = tripVisionHtml(group.name, expanded, headcount);
+    // Who said what: vision answers are named (money never is)
+    const people = members.map((m) => {
+      const picks = polls
+        .filter((p) => p.kind === "choice")
+        .map((p) => {
+          const v = (p.votes ?? []).find((x) => x.user_id === m.user_id);
+          const o = v ? p.poll_options.find((x) => x.id === v.option_id) : null;
+          return o?.label ?? null;
+        })
+        .filter((x): x is string => !!x);
+      const asCouple = m.meta?.answering_for === "couple" && (m.meta as { partner_name?: string }).partner_name;
+      return { name: asCouple ? `${nameOf(m.user_id)} & ${(m.meta as { partner_name?: string }).partner_name}` : nameOf(m.user_id), picks };
+    });
+    extraHtml = tripVisionHtml(group.name, expanded, headcount, people);
   } else if (n === 8) {
     const destination = gdata.destination || (await (async () => {
       const { data: p5 } = await admin.from("polls").select("id, poll_options(id, label), votes(option_id, user_id)").eq("group_id", groupId).eq("step_n", 5);

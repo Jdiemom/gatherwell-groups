@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { STEPS } from "@/lib/steps";
+import { AIRPORTS } from "@/lib/airports";
 
 type MemberMeta = {
   answering_for?: "solo" | "couple" | "partner_separate";
@@ -11,8 +12,10 @@ type MemberMeta = {
   home_airport?: string;
   bags?: string;
   cabin?: string;
+  kids?: number;
+  kid_ages?: string;
 };
-type Member = { user_id: string; role: string; name: string; meta: MemberMeta };
+type Member = { user_id: string; role: string; name: string; rawName?: string | null; meta: MemberMeta };
 type Poll = {
   id: string; step_n: number; kind: string; question: string;
   options: { id: string; label: string; meta: string | null; sort: number }[];
@@ -26,6 +29,7 @@ type GroupData = {
   discuss?: { whatsapp?: string; video?: string };
   decisions?: Record<string, string>;
   destination?: string;
+  dates?: { start: string; nights: number };
   [k: string]: unknown;
 };
 type Group = {
@@ -75,7 +79,9 @@ export default function GroupFlow(props: {
   const [pfRows, setPfRows] = useState<{ label: string; meta: string }[]>([{ label: "", meta: "" }, { label: "", meta: "" }]);
   const me = members.find((m) => m.user_id === userId);
   const [profileOpen, setProfileOpen] = useState(!me?.meta?.answering_for);
-  const [pv, setPv] = useState<MemberMeta & { name?: string }>({ name: me?.name ?? "", ...(me?.meta ?? {}) });
+  const [pv, setPv] = useState<MemberMeta & { name?: string }>({ name: me?.rawName ?? "", ...(me?.meta ?? {}) });
+  const [recDecision, setRecDecision] = useState<string | null>(null);
+  const [stayReq, setStayReq] = useState<string | null>(null);
   const [tieBreak, setTieBreak] = useState<{ stepN: number; polls: Poll[] } | null>(null);
   const [discuss, setDiscuss] = useState(group.data?.discuss ?? {});
   const [boostOpen, setBoostOpen] = useState(false);
@@ -85,7 +91,8 @@ export default function GroupFlow(props: {
   const [suggest, setSuggest] = useState("");
 
   const w = (uid: string) => (members.find((m) => m.user_id === uid)?.meta?.answering_for === "couple" ? 2 : 1);
-  const headcount = members.reduce((s, m) => s + (m.meta?.answering_for === "couple" ? 2 : 1), 0);
+  const seatsOf = (m: Member) => (m.meta?.answering_for === "couple" ? 2 : 1) + (m.meta?.kids ?? 0);
+  const headcount = members.reduce((s, m) => s + seatsOf(m), 0);
   const isSolo = plan === "solo";
   const isConcierge = plan === "concierge";
 
@@ -118,8 +125,12 @@ export default function GroupFlow(props: {
   }
 
   async function vote(poll: Poll, optionId: string) {
-    if (completed.has(poll.step_n)) {
+    if (completed.has(poll.step_n) && poll.step_n !== 6) {
       say("This decision is locked in. Ask your organizer to reopen the step if plans changed.");
+      return;
+    }
+    if (group.data?.decisions?.[poll.id]) {
+      say("Your organizer recorded this decision; no vote needed.");
       return;
     }
     const supabase = supabaseBrowser();
@@ -166,9 +177,11 @@ export default function GroupFlow(props: {
     const meta: MemberMeta = {
       answering_for: pv.answering_for,
       partner_name: pv.partner_name?.trim() || undefined,
-      home_airport: pv.home_airport?.trim() || undefined,
+      home_airport: pv.home_airport?.trim().toUpperCase() || undefined,
       bags: pv.bags,
       cabin: pv.cabin,
+      kids: Math.max(0, Math.min(12, Number(pv.kids) || 0)),
+      kid_ages: pv.kid_ages?.trim() || undefined,
     };
     const [{ error: e1 }, { error: e2 }] = await Promise.all([
       supabase.from("profiles").update({ name }).eq("id", userId),
@@ -183,7 +196,7 @@ export default function GroupFlow(props: {
   /* ---------- ties ---------- */
   function tiedPolls(n: number): Poll[] {
     return polls.filter((p) => {
-      if (p.step_n !== n || p.kind !== "choice") return false;
+      if (p.step_n !== n || (p.kind !== "choice" && p.kind !== "budget")) return false;
       if (group.data?.decisions?.[p.id]) return false;
       const counts = p.options
         .filter((o) => !o.label.toLowerCase().includes("flexible"))
@@ -207,7 +220,7 @@ export default function GroupFlow(props: {
       const rest = t.polls.filter((p) => p.id !== pollId);
       return rest.length ? { ...t, polls: rest } : null;
     });
-    say("Tie broken. Your call is recorded as the decision.");
+    say("Recorded as the decision.");
   }
 
   /* ---------- discussion links ---------- */
@@ -351,6 +364,24 @@ export default function GroupFlow(props: {
       .upsert({ group_id: group.id, step_n: n, completed_by: userId });
     if (error) { say("Couldn't save progress. Try again."); return; }
     setCompleted((c) => new Set([...c, n]));
+    if (n === 3) {
+      // Lock structured dates so the itinerary, payments, and savings math have real dates.
+      const dp = polls.find((p) => p.step_n === 3 && p.kind === "dates");
+      if (dp) {
+        const dv = dp.dvotes ?? [];
+        const scored = dp.options.map((o) => ({
+          o,
+          yes: dv.filter((v) => v.option_id === o.id && v.answer === "yes").reduce((s, v) => s + w(v.user_id), 0),
+          maybe: dv.filter((v) => v.option_id === o.id && v.answer === "maybe").reduce((s, v) => s + w(v.user_id), 0),
+        }));
+        const best = scored.sort((a, b) => b.yes - a.yes || b.maybe - a.maybe)[0];
+        if (best?.o.meta) {
+          const dates = { start: best.o.meta, nights: decidedNights() };
+          supabase.from("groups").update({ data: { ...(group.data ?? {}), dates } }).eq("id", group.id)
+            .then(() => { if (group.data) group.data.dates = dates; else group.data = { dates }; });
+        }
+      }
+    }
     if (n === 6) {
       // Anyone who asked for a group quote becomes a Gatherwell lead, with home airports attached.
       fetch("/api/leads/flight-quote", {
@@ -369,11 +400,18 @@ export default function GroupFlow(props: {
   /* ---------- budget: derived from the group's real vote, adjustable by the organizer ---------- */
   function votedBudgetTarget(): number | null {
     const bp = polls.find((p) => p.kind === "budget");
-    if (!bp || bp.votes.length === 0) return null;
-    const counts = bp.options.map((o) => ({ o, c: bp.votes.filter((v) => v.option_id === o.id).length }));
-    const win = counts.sort((a, b) => b.c - a.c)[0];
-    if (!win || win.c === 0) return null;
-    const nums = (win.o.label.match(/\d[\d,]*/g) || []).map((s) => parseInt(s.replace(/,/g, ""), 10));
+    if (!bp) return null;
+    const override = group.data?.decisions?.[bp.id];
+    let winLabel: string | null = null;
+    if (override) {
+      winLabel = bp.options.find((o) => o.id === override)?.label ?? null;
+    } else if (bp.votes.length > 0) {
+      const counts = bp.options.map((o) => ({ o, c: bp.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0) }));
+      const win = counts.sort((a, b) => b.c - a.c)[0];
+      winLabel = win && win.c > 0 ? win.o.label : null;
+    }
+    if (!winLabel) return null;
+    const nums = (winLabel.match(/\d[\d,]*/g) || []).map((s) => parseInt(s.replace(/,/g, ""), 10));
     if (!nums.length) return null;
     return nums.length >= 2 ? Math.round((nums[0] + nums[1]) / 2) : Math.round(nums[0] * 1.15);
   }
@@ -398,6 +436,12 @@ export default function GroupFlow(props: {
   }
 
   /* ---------- trip length ---------- */
+  function decidedNightsUnresolved(): boolean {
+    if (typeof tripLength === "number") return false;
+    const lp = polls.find((p) => p.step_n === 3 && p.kind === "choice" && p.question.toLowerCase().includes("how long"));
+    return !lp || lp.votes.length === 0;
+  }
+
   function decidedNights(): number {
     if (typeof tripLength === "number") return tripLength;
     // "vote": read the winner of the length poll if there is one
@@ -458,7 +502,10 @@ export default function GroupFlow(props: {
     const e = new Date(s);
     e.setDate(s.getDate() + nights);
     const f = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    return `${f(s)} – ${f(e)} · ${nights} nights`;
+    const sameYear = s.getFullYear() === e.getFullYear();
+    return sameYear
+      ? `${f(s)} – ${f(e)}, ${e.getFullYear()} · ${nights} nights`
+      : `${f(s)}, ${s.getFullYear()} – ${f(e)}, ${e.getFullYear()} · ${nights} nights`;
   }
 
   /* ---------- organizer-created polls ---------- */
@@ -467,7 +514,7 @@ export default function GroupFlow(props: {
     let opts: { label: string; meta: string | null }[];
     if (pfKind === "dates") {
       const nights = decidedNights();
-      opts = [...pfDates].sort().map((d) => ({ label: fmtDateRange(d, nights), meta: null }));
+      opts = [...pfDates].sort().map((d) => ({ label: fmtDateRange(d, nights), meta: d }));
       if (opts.length < 2) { say("Add at least two candidate dates with the calendar."); return; }
     } else {
       opts = pfRows
@@ -688,7 +735,6 @@ ${link}`,
               <div className="d-lab">
                 <span className="name">{o.label}</span>
                 {isBest && <span className="d-best">Front-runner</span>}
-                {o.meta && <span className="meta">{o.meta}</span>}
                 {(yes + maybe + no) > 0 && (
                   <span className="d-counts">{yes} yes · {maybe} maybe · {no} no</span>
                 )}
@@ -755,7 +801,7 @@ ${link}`,
             <input
               className="pf-input"
               style={{ marginBottom: 0 }}
-              placeholder="Suggest your own: e.g. Sunset horseback ride"
+              placeholder="Suggest your own, kids' picks welcome: e.g. Emma (9) wants the turtle snorkel"
               value={suggest}
               onChange={(e) => setSuggest(e.target.value)}
             />
@@ -777,8 +823,8 @@ ${link}`,
     const total = poll.votes.reduce((s, v) => s + w(v.user_id), 0);
     const mine = poll.votes.find((v) => v.user_id === userId)?.option_id;
     const isBudget = poll.kind === "budget";
-    const closed = completed.has(poll.step_n) && poll.step_n !== 6;
     const override = group.data?.decisions?.[poll.id];
+    const closed = (completed.has(poll.step_n) && poll.step_n !== 6) || !!override;
     const max = Math.max(
       ...poll.options
         .filter((o) => !o.label.toLowerCase().includes("flexible"))
@@ -791,14 +837,32 @@ ${link}`,
           {poll.question}
           {closed && <span className="decided">Decided</span>}
           {isOrganizer && !closed && (
-            <button
-              className="poll-del"
-              onClick={() => (confirmDel === poll.id ? deletePoll(poll.id) : setConfirmDel(poll.id))}
-            >
-              {confirmDel === poll.id ? "Click again to remove" : "Remove"}
-            </button>
+            <>
+              <button
+                className="poll-del"
+                onClick={() => (confirmDel === poll.id ? deletePoll(poll.id) : setConfirmDel(poll.id))}
+              >
+                {confirmDel === poll.id ? "Click again to remove" : "Remove"}
+              </button>
+              <button className="poll-del" style={{ color: "var(--sage-deep)" }} onClick={() => setRecDecision(recDecision === poll.id ? null : poll.id)}>
+                {recDecision === poll.id ? "Cancel" : "Already decided?"}
+              </button>
+            </>
           )}
         </h3>
+        {recDecision === poll.id && !closed && (
+          <div className="callout sage" style={{ marginTop: 0 }}>
+            <b>Record the decision your group already made</b>
+            Tap the option that won. It locks in without a vote.
+            <div className="tpl-chips" style={{ marginTop: 10 }}>
+              {poll.options.map((o) => (
+                <button key={o.id} className="tpl-chip" onClick={() => { declareWinner(poll.id, o.id); setRecDecision(null); }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {poll.options.map((o) => {
           const count = poll.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0);
           const isFlex = o.label.toLowerCase().includes("flexible");
@@ -862,7 +926,12 @@ ${link}`,
                 value={pfQ}
                 onChange={(e) => setPfQ(e.target.value)}
               />
-              {pfKind === "dates" ? (
+              {pfKind === "dates" && tripLength === "vote" && decidedNightsUnresolved() ? (
+                <div className="callout" style={{ marginTop: 0 }}>
+                  <b>Length first, then dates</b>
+                  Your group is voting on trip length (the poll above). Once that has votes, come back and the date ranges will use the winning length.
+                </div>
+              ) : pfKind === "dates" ? (
                 <>
                   <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
                     <input
@@ -1040,6 +1109,23 @@ ${link}`,
                   </button>
                 ))}
               </div>
+              {isOrganizer && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+                  <span className="pf-label" style={{ margin: 0 }}>Or custom:</span>
+                  <input
+                    className="pf-input"
+                    style={{ marginBottom: 0, maxWidth: 110 }}
+                    inputMode="numeric"
+                    placeholder="nights"
+                    defaultValue={typeof tripLength === "number" && ![4, 7, 10, 14].includes(tripLength) ? tripLength : ""}
+                    onBlur={(e) => {
+                      const v = parseInt(e.target.value.replace(/\D/g, "") || "0", 10);
+                      if (v >= 1 && v <= 60 && v !== tripLength) saveTripLength(v);
+                    }}
+                  />
+                  <span className="bw-note" style={{ margin: 0 }}>nights</span>
+                </div>
+              )}
             </div>
             <div className="callout sage">
               <b>Invite your group</b>
@@ -1120,6 +1206,21 @@ ${link}`,
                 </div>
               </div>
             )}
+            {(() => {
+              const waiting = members
+                .filter((m) => m.meta?.answering_for === "partner_separate" && m.meta?.partner_name)
+                .map((m) => `${m.meta!.partner_name} (${m.name}'s partner)`);
+              return waiting.length > 0 ? (
+                <div className="callout">
+                  <b>Still to join</b>
+                  {waiting.join(" · ")}. Send them the invite link so their votes count.
+                </div>
+              ) : null;
+            })()}
+            <div className="callout sage">
+              <b>Kids on this trip?</b>
+              Our suggested house rule: adults vote on the structure (dates, budget, where), and kids get a voice on the fun in Step 8. Teens 13+ can be invited as full voting members if your group wants; that&apos;s your call as organizer.
+            </div>
             <div className="callout">
               <b>Method rule: no planning around a “maybe”</b>
               Pick a commitment device with your group: a small deposit, a reply-by date, or the
@@ -1408,6 +1509,40 @@ BOOKING PATH
               <div><h4>Prefer a ship to a villa? <span className="badge">Gatherwell</span></h4><p>Group cruises through our luxury cruise partners.</p></div>
               <a className="btn btn-sage btn-sm" href="https://gatherwelltravel.com/luxury-cruises" target="_blank" rel="noopener noreferrer">See cruises</a>
             </div>
+            {isOrganizer && (
+              <div className="bw">
+                <h3>Want us to pull options for you?</h3>
+                <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                  One tap sends Gatherwell your group&apos;s dates, budget, and headcount. We reply with hand-picked villas (or ships) that actually fit.
+                </p>
+                {stayReq === null ? (
+                  <button className="btn btn-primary btn-sm" onClick={() => setStayReq("")}>Request options from Gatherwell</button>
+                ) : (
+                  <>
+                    <textarea
+                      className="pf-input"
+                      rows={3}
+                      placeholder="Anything we should know? Pool a must, walkable to town, cruise-curious, accessibility needs…"
+                      value={stayReq}
+                      onChange={(e) => setStayReq(e.target.value)}
+                    />
+                    <div className="step-actions" style={{ marginTop: 0 }}>
+                      <button className="btn btn-primary btn-sm" onClick={async () => {
+                        const res = await fetch("/api/leads/stay-quote", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ groupId: group.id, preferences: stayReq }),
+                        }).catch(() => null);
+                        if (!res?.ok) { say("Couldn't send. Try again."); return; }
+                        setStayReq(null);
+                        say("Sent! Gatherwell will reply with options that fit your group.");
+                      }}>Send request</button>
+                      <button className="btn btn-outline btn-sm" onClick={() => setStayReq(null)}>Cancel</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <div className="step-actions">{completeBtn(7, "Book the Winner →", true, "Home base chosen. Group perks applied.")}</div>
           </>
         );
@@ -1448,7 +1583,7 @@ BOOKING PATH
               </div>
             </div>
             <div className="step-actions" style={{ marginTop: 22 }}>
-              {completeBtn(9, done ? "Trip Planned 🎉" : "Generate Final Outputs →", true, "Trip complete! 🎉 Pause your subscription until the next adventure.")}
+              {completeBtn(9, done ? "Trip Planned 🎉" : "Generate Final Outputs →", true, "Trip complete! 🎉 Every output is ready whenever you need it.")}
               <button className="btn btn-outline btn-sm" onClick={() => setModal({
                 title: "Master Itinerary",
                 fname: "Master-Itinerary.txt",
@@ -1473,8 +1608,9 @@ Need a human? gatherwelltravel.com`,
                 const dep = Math.round(total * 0.25);
                 const bal = total - dep;
                 const rows2 = members.map((m) => {
-                  const seats = m.meta?.answering_for === "couple" ? 2 : 1;
-                  const who = seats === 2 && m.meta?.partner_name ? `${m.name} & ${m.meta.partner_name}` : m.name;
+                  const seats = seatsOf(m);
+                  let who = m.meta?.answering_for === "couple" && m.meta?.partner_name ? `${m.name} & ${m.meta.partner_name}` : m.name;
+                  if ((m.meta?.kids ?? 0) > 0) who += ` (+${m.meta!.kids} kid${m.meta!.kids! > 1 ? "s" : ""})`;
                   return { who, dep: dep * seats, bal: bal * seats };
                 });
                 setModal({
@@ -1547,7 +1683,7 @@ rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before dep
                       <div className="dot">{done ? "✓" : st.n}</div>
                       <div>
                         <div className="t">{st.t}</div>
-                        <div className="s">{locked ? "Locked" : done ? "Complete" : st.s}</div>
+                        <div className="s">{locked ? "Locked" : done ? (st.n === 6 ? "Ongoing" : "Complete") : st.s}</div>
                       </div>
                     </div>
                   );
@@ -1609,7 +1745,10 @@ rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before dep
             </div>
             {pv.answering_for === "couple" && (
               <>
-                <label className="pf-label">Your partner&apos;s name (your votes will count for both of you)</label>
+                <p className="bw-note" style={{ marginTop: 0 }}>
+                  Answering as a couple means every vote you cast counts as two, and you both count in the budget and headcount.
+                </p>
+                <label className="pf-label">Your partner&apos;s name</label>
                 <input className="pf-input" placeholder="Partner's name" value={pv.partner_name ?? ""} onChange={(e) => setPv({ ...pv, partner_name: e.target.value })} />
               </>
             )}
@@ -1619,8 +1758,33 @@ rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before dep
                 <input className="pf-input" placeholder="Partner's name" value={pv.partner_name ?? ""} onChange={(e) => setPv({ ...pv, partner_name: e.target.value })} />
               </>
             )}
+            <label className="pf-label">Kids traveling with you</label>
+            <div className="tpl-chips" style={{ marginBottom: 12 }}>
+              {[0, 1, 2, 3, 4].map((k) => (
+                <button key={k} className={`tpl-chip ${(pv.kids ?? 0) === k ? "on" : ""}`} onClick={() => setPv({ ...pv, kids: k })}>
+                  {k === 0 ? "None" : k}{k === 4 ? "+" : ""}
+                </button>
+              ))}
+            </div>
+            {(pv.kids ?? 0) > 0 && (
+              <>
+                <label className="pf-label">Their ages (helps with houses and activities)</label>
+                <input className="pf-input" placeholder="e.g. 6, 9, 14" value={pv.kid_ages ?? ""} onChange={(e) => setPv({ ...pv, kid_ages: e.target.value })} />
+              </>
+            )}
             <label className="pf-label">Home airport</label>
-            <input className="pf-input" placeholder="e.g. YYZ, LAX, JFK" value={pv.home_airport ?? ""} onChange={(e) => setPv({ ...pv, home_airport: e.target.value })} />
+            <input
+              className="pf-input"
+              list="gw-airports"
+              placeholder="Start typing a city or code"
+              value={pv.home_airport ?? ""}
+              onChange={(e) => setPv({ ...pv, home_airport: e.target.value })}
+            />
+            <datalist id="gw-airports">
+              {AIRPORTS.map((a) => (
+                <option key={a.code} value={a.code}>{a.code} · {a.city}</option>
+              ))}
+            </datalist>
             <label className="pf-label">Packing style</label>
             <div className="tpl-chips" style={{ marginBottom: 12 }}>
               <button className={`tpl-chip ${pv.bags === "carryon" ? "on" : ""}`} onClick={() => setPv({ ...pv, bags: "carryon" })}>Carry-on only</button>

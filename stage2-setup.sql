@@ -226,3 +226,64 @@ do $$ begin
       )
     );
 exception when duplicate_object then null; end $$;
+-- Groups by Gatherwell · Release 1 (walkthrough batch)
+-- Paste this whole file into Supabase → SQL Editor → New query → Run.
+-- Safe to run more than once.
+
+-- 1) Per-group traveler profile (solo/couple, partner, airport, bags, cabin)
+alter table public.group_members add column if not exists meta jsonb not null default '{}'::jsonb;
+
+do $$ begin
+  create policy "member updates own membership" on public.group_members
+    for update using (user_id = auth.uid());
+exception when duplicate_object then null; end $$;
+
+-- 2) Multi-select activity votes reuse date_votes; members can unselect
+do $$ begin
+  create policy "members remove own date answer" on public.date_votes
+    for delete using (user_id = auth.uid());
+exception when duplicate_object then null; end $$;
+
+-- 3) Any traveler can suggest an activity option on Step 8 polls
+do $$ begin
+  create policy "members suggest activity options" on public.poll_options
+    for insert with check (
+      exists (
+        select 1 from public.polls p
+        where p.id = poll_id and p.step_n = 8 and public.is_group_member(p.group_id)
+      )
+    );
+exception when duplicate_object then null; end $$;
+-- Groups by Gatherwell: date availability voting (yes / maybe / no per date).
+-- Paste this whole file into Supabase → SQL Editor → New query → Run.
+-- Safe to run more than once.
+
+create table if not exists public.date_votes (
+  poll_id uuid not null references public.polls(id) on delete cascade,
+  option_id uuid not null references public.poll_options(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  answer text not null check (answer in ('yes','no','maybe')),
+  created_at timestamptz not null default now(),
+  primary key (option_id, user_id)
+);
+alter table public.date_votes enable row level security;
+
+do $$ begin
+  create policy "members read date votes" on public.date_votes
+    for select using (
+      exists (select 1 from public.polls p where p.id = poll_id and public.is_group_member(p.group_id))
+    );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "members answer dates" on public.date_votes
+    for insert with check (
+      user_id = auth.uid()
+      and exists (select 1 from public.polls p where p.id = poll_id and public.is_group_member(p.group_id))
+    );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "members change own date answer" on public.date_votes
+    for update using (user_id = auth.uid());
+exception when duplicate_object then null; end $$;

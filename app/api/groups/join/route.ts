@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { PLAN_LIMITS } from "@/lib/stripe";
+import { sendPersonalEmails } from "@/lib/notify";
 
 export async function POST(request: NextRequest) {
   const supabase = await supabaseServer();
@@ -52,6 +53,27 @@ export async function POST(request: NextRequest) {
     console.error("join failed:", error.message);
     return NextResponse.json({ error: "Couldn't join just now." }, { status: 500 });
   }
+
+  // Tell the organizer someone arrived (best-effort; never blocks the join).
+  try {
+    if (user.id !== group.owner_id) {
+      const [{ data: owner }, { data: joiner }] = await Promise.all([
+        db.from("profiles").select("email").eq("id", group.owner_id).maybeSingle(),
+        db.from("profiles").select("name, email").eq("id", user.id).maybeSingle(),
+      ]);
+      const joinerName = joiner?.name || joiner?.email?.split("@")[0] || "A traveler";
+      if (owner?.email) {
+        await sendPersonalEmails([{
+          to: owner.email,
+          subject: `${group.name}: ${joinerName} just joined`,
+          heading: `${joinerName} is in`,
+          body: `${joinerName} accepted your invite to ${group.name}. Once everyone's aboard, complete Step 1 and the first votes go out.`,
+          ctaUrl: `${request.nextUrl.origin}/app/group/${group.id}`,
+          ctaText: "See your crew",
+        }]);
+      }
+    }
+  } catch { /* ignore */ }
 
   return NextResponse.json({ ok: true, id: group.id, name: group.name });
 }
