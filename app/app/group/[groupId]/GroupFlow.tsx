@@ -5,6 +5,8 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { STEPS } from "@/lib/steps";
 import { AIRPORTS } from "@/lib/airports";
+import { matchDestinations } from "@/lib/match";
+import type { Destination } from "@/lib/destinations";
 
 type MemberMeta = {
   answering_for?: "solo" | "couple" | "partner_separate";
@@ -23,6 +25,7 @@ type Poll = {
   dvotes?: { option_id: string; user_id: string; answer: string }[];
 };
 type Budget = { flights: number; stay: number; activities: number; food: number };
+type ItinItem = { id: string; t: string; k: string; link?: string };
 type GroupData = {
   budget?: Budget;
   tripLength?: number | "vote";
@@ -30,6 +33,8 @@ type GroupData = {
   decisions?: Record<string, string>;
   destination?: string;
   dates?: { start: string; nights: number };
+  itinerary?: { items: ItinItem[] }[];
+  payplan?: "full" | "monthly" | "biweekly";
   [k: string]: unknown;
 };
 type Group = {
@@ -89,6 +94,8 @@ export default function GroupFlow(props: {
   const [conciergeMsg, setConciergeMsg] = useState<string | null>(null);
   const [destSkip, setDestSkip] = useState("");
   const [suggest, setSuggest] = useState("");
+  const [itin, setItin] = useState<{ items: ItinItem[] }[] | null>(group.data?.itinerary ?? null);
+  const [payplan, setPayplan] = useState<"full" | "monthly" | "biweekly">(group.data?.payplan ?? "monthly");
 
   const w = (uid: string) => (members.find((m) => m.user_id === uid)?.meta?.answering_for === "couple" ? 2 : 1);
   const seatsOf = (m: Member) => (m.meta?.answering_for === "couple" ? 2 : 1) + (m.meta?.kids ?? 0);
@@ -643,6 +650,146 @@ ${link}`,
       a.click();
       URL.revokeObjectURL(a.href);
     } catch { say("Download blocked in this browser."); }
+  }
+
+  /* ---------- destination matching ---------- */
+  function visionLabels(): string[] {
+    return polls
+      .filter((p) => p.step_n === 2 && p.kind === "choice")
+      .map((p) => {
+        const ov = group.data?.decisions?.[p.id];
+        if (ov) return p.options.find((o) => o.id === ov)?.label ?? null;
+        const counts = p.options.map((o) => ({ o, c: p.votes.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0) }));
+        const win = counts.sort((a, b) => b.c - a.c)[0];
+        return win && win.c > 0 ? win.o.label : null;
+      })
+      .filter((x): x is string => !!x);
+  }
+
+  async function addDestinationOption(d: Destination) {
+    const dp = polls.find((p) => p.step_n === 5 && p.kind === "choice");
+    if (!dp) { say("No destination poll to add to. Create one first."); return; }
+    const label = `${d.name}, ${d.country}`;
+    if (dp.options.some((o) => o.label === label)) { say("Already on the shortlist."); return; }
+    const supabase = supabaseBrowser();
+    const { data: created, error } = await supabase
+      .from("poll_options")
+      .insert({ poll_id: dp.id, label, meta: d.blurb, sort: dp.options.length })
+      .select("id, label, meta, sort")
+      .single();
+    if (error || !created) { say("Couldn't add it. Try again."); return; }
+    setPolls((ps) => ps.map((p) => (p.id !== dp.id ? p : { ...p, options: [...p.options, created] })));
+    say(`${d.name} added to the shortlist.`);
+  }
+
+  /* ---------- itinerary builder ---------- */
+  function tripDates(): { start: Date; nights: number } | null {
+    const d = group.data?.dates;
+    if (!d?.start) return null;
+    return { start: new Date(d.start + "T12:00:00"), nights: d.nights || decidedNights() };
+  }
+
+  function dayLabel(i: number): string {
+    const td = tripDates();
+    if (!td) return `Day ${i + 1}`;
+    const dt = new Date(td.start);
+    dt.setDate(dt.getDate() + i);
+    return `Day ${i + 1} · ${dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+  }
+
+  function winningActivities(): string[] {
+    const mp = polls.find((p) => p.step_n === 8 && p.kind === "multi");
+    if (!mp) return [];
+    const dv = (mp.dvotes ?? []).filter((v) => v.answer === "yes");
+    return mp.options
+      .map((o) => ({ o, c: dv.filter((v) => v.option_id === o.id).reduce((s, v) => s + w(v.user_id), 0) }))
+      .filter((r) => r.c > 0)
+      .sort((a, b) => b.c - a.c)
+      .map((r) => r.o.label.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim());
+  }
+
+  const TRANSFER_URL = "https://www.book-online-transfers.com/en/gatherwell-travel";
+
+  function buildItinerary(): { items: ItinItem[] }[] {
+    const td = tripDates();
+    const nights = td?.nights ?? decidedNights();
+    const dayCount = Math.max(2, Math.min(nights + 1, 22));
+    const dest = group.data?.destination ?? "";
+    const dinnerLink = `https://www.google.com/search?q=${encodeURIComponent(`best group dinner restaurants ${dest}`.trim())}`;
+    const acts = winningActivities();
+    let a = 0;
+    const days: { items: ItinItem[] }[] = [];
+    for (let i = 0; i < dayCount; i++) {
+      const items: ItinItem[] = [];
+      const id = (j: number) => `d${i}-${j}-${Math.floor(Math.random() * 1e6)}`;
+      if (i === 0) {
+        items.push({ id: id(0), t: "Arrivals · pre-booked group transfer", k: "transfer", link: TRANSFER_URL });
+        items.push({ id: id(1), t: "Grocery & essentials run", k: "custom" });
+        items.push({ id: id(2), t: "Welcome dinner: first night, all together", k: "meal", link: dinnerLink });
+      } else if (i === dayCount - 1) {
+        items.push({ id: id(0), t: "Pack, checkout & goodbyes", k: "custom" });
+        items.push({ id: id(1), t: "Departure transfer to the airport", k: "transfer", link: TRANSFER_URL });
+      } else {
+        if (a < acts.length) {
+          items.push({ id: id(0), t: `Morning: ${acts[a]}`, k: "activity" });
+          a++;
+        } else {
+          items.push({ id: id(0), t: "Morning: open, follow the mood", k: "free" });
+        }
+        items.push(i % 2 === 1
+          ? { id: id(1), t: "Afternoon: protected free time (the 60/40 rule)", k: "free" }
+          : { id: id(2), t: "Afternoon: pool, naps, wandering", k: "free" });
+        items.push({ id: id(3), t: "Dinner: pick a spot", k: "meal", link: dinnerLink });
+      }
+      days.push({ items });
+    }
+    return days;
+  }
+
+  async function saveItinerary(days: { items: ItinItem[] }[]) {
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from("groups")
+      .update({ data: { ...(group.data ?? {}), itinerary: days, payplan } })
+      .eq("id", group.id);
+    if (error) { say("Couldn't save the itinerary."); return; }
+    if (group.data) { group.data.itinerary = days; group.data.payplan = payplan; }
+    else group.data = { itinerary: days, payplan };
+    say("Itinerary saved for the whole group.");
+  }
+
+  function moveItem(di: number, ii: number, dir: "up" | "down" | "prevDay" | "nextDay") {
+    if (!itin) return;
+    const days = itin.map((d) => ({ items: [...d.items] }));
+    const [item] = days[di].items.splice(ii, 1);
+    if (dir === "up") days[di].items.splice(Math.max(0, ii - 1), 0, item);
+    else if (dir === "down") days[di].items.splice(Math.min(days[di].items.length, ii + 1), 0, item);
+    else if (dir === "prevDay" && di > 0) days[di - 1].items.push(item);
+    else if (dir === "nextDay" && di < days.length - 1) days[di + 1].items.unshift(item);
+    else days[di].items.splice(ii, 0, item);
+    setItin(days);
+  }
+
+  /* ---------- payment schedule from real dates ---------- */
+  function paymentInstallments(): { label: string; count: number } {
+    const td = tripDates();
+    if (!td || payplan === "full") return { label: "one payment, due now", count: 1 };
+    const days = Math.max(0, Math.round((td.start.getTime() - new Date().getTime()) / 86400000));
+    const step = payplan === "monthly" ? 30 : 15;
+    const count = Math.max(1, Math.min(Math.floor((days - 14) / step), payplan === "monthly" ? 18 : 36));
+    return { label: payplan === "monthly" ? `${count} monthly payments` : `${count} payments, twice a month`, count };
+  }
+
+  function installmentDates(count: number): string[] {
+    const step = payplan === "monthly" ? 30 : 15;
+    const out: string[] = [];
+    const base = new Date();
+    for (let i = 1; i <= count; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + step * i);
+      out.push(d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }));
+    }
+    return out;
   }
 
   /* ---------- the trip so far (sidebar) ---------- */
@@ -1307,6 +1454,12 @@ ${link}`,
                     {editable
                       ? "Adjust the numbers to fit your trip, then save. Every later output uses these figures."
                       : "Set by your organizer. Every budget output uses these figures."}
+                    {(() => {
+                      const td = tripDates();
+                      if (!td) return null;
+                      const months = Math.max(1, Math.round((td.start.getTime() - new Date().getTime()) / (30 * 86400000)));
+                      return ` Save ${fmt(Math.ceil(budgetTotal(b) / months))} a month between now and departure and the trip is paid before you pack.`;
+                    })()}
                   </p>
                 </div>
               );
@@ -1423,6 +1576,44 @@ rows.map(([c, v]) => `"${c}","${fmt(v)}","${fmt(v * headcount)}"`).join("\n"),
           <>
             {header(5)}
             <p className="lead">Now, and only now, the group picks where. Vote from a short list that fits the locked vision, dates, and budget.</p>
+            {completed.has(2) && (() => {
+              const matches = matchDestinations({
+                labels: visionLabels(),
+                budgetPerPerson: budget || completed.has(4) ? budgetTotal(budget ?? defaultBudget()) : null,
+                kidsPresent: members.some((m) => (m.meta?.kids ?? 0) > 0),
+                nightsKnown: typeof tripLength === "number" ? tripLength : group.data?.dates?.nights ?? null,
+              });
+              return (
+                <div className="bw">
+                  <h3>Matched to your group <span className="bw-tag">by Gatherwell</span></h3>
+                  <p className="bw-note" style={{ marginTop: 0, marginBottom: 14 }}>
+                    Scored against your group&apos;s own votes: the vision, the budget, who&apos;s coming, and how far you&apos;ll fly.
+                  </p>
+                  {matches.map(({ d, why }) => (
+                    <div key={d.id} className="dest-card">
+                      <div className="dc-head">
+                        <b>{d.name}</b>
+                        <span className="dc-country">{d.country}</span>
+                        <span className="dc-months">{d.months}</span>
+                      </div>
+                      <p className="dc-blurb">{d.blurb}</p>
+                      {why.length > 0 && <p className="dc-why">Why it fits: {why.join(" · ")}</p>}
+                      {d.picks && d.picks.length > 0 && (
+                        <p className="dc-picks">Gatherwell insider access: {d.picks.map((p) => p.t).join(" · ")}</p>
+                      )}
+                      <div className="step-actions" style={{ marginTop: 10 }}>
+                        {isOrganizer && !completed.has(5) && (
+                          <button className="btn btn-primary btn-sm" onClick={() => addDestinationOption(d)}>Add to the shortlist</button>
+                        )}
+                        {d.villa >= 1 && (
+                          <a className="btn btn-outline btn-sm" href="https://villa-info.net" target="_blank" rel="noopener noreferrer">See villas</a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {isOrganizer && !completed.has(5) && (
               <div className="callout" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <span><b>Already decided?</b> Skip the vote and enter it.</span>
@@ -1582,6 +1773,128 @@ BOOKING PATH
                 <span className="d">vs. per-person advisor fees and un-timed flight purchases.</span>
               </div>
             </div>
+
+            <div className="bw">
+              <h3>The itinerary <span className="bw-tag">the keepsake</span></h3>
+              {!tripDates() ? (
+                <p className="bw-note" style={{ marginTop: 0 }}>
+                  Lock your dates in Step 3 and the day-by-day itinerary builds itself here.
+                </p>
+              ) : itin === null ? (
+                <>
+                  <p className="bw-note" style={{ marginTop: 0, marginBottom: 12 }}>
+                    One click drafts your {(tripDates()!.nights) + 1} days: winning activities placed, transfers and
+                    the welcome dinner slotted, free time protected. Then shape it however you like.
+                  </p>
+                  {isOrganizer ? (
+                    <button className="btn btn-primary btn-sm" onClick={() => setItin(buildItinerary())}>Build my itinerary</button>
+                  ) : (
+                    <p className="bw-note" style={{ marginTop: 0 }}>Your organizer builds this; it appears here when saved.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  {itin.map((day, di) => (
+                    <div key={di} className="it-day">
+                      <div className="it-head">{dayLabel(di)}</div>
+                      {day.items.map((item, ii) => (
+                        <div key={item.id} className="it-row">
+                          {isOrganizer ? (
+                            <input
+                              className="it-input"
+                              value={item.t}
+                              onChange={(e) => {
+                                const days = itin.map((d) => ({ items: [...d.items] }));
+                                days[di].items[ii] = { ...item, t: e.target.value };
+                                setItin(days);
+                              }}
+                            />
+                          ) : (
+                            <span className="it-text">{item.t}</span>
+                          )}
+                          {item.link && (
+                            <a className="it-link" href={item.link} target="_blank" rel="noopener noreferrer">
+                              {item.k === "transfer" ? "Book transfer" : "Research"}
+                            </a>
+                          )}
+                          {isOrganizer && (
+                            <span className="it-ctl">
+                              <button onClick={() => moveItem(di, ii, "up")} title="Move up">↑</button>
+                              <button onClick={() => moveItem(di, ii, "down")} title="Move down">↓</button>
+                              <button onClick={() => moveItem(di, ii, "prevDay")} title="Previous day">◂</button>
+                              <button onClick={() => moveItem(di, ii, "nextDay")} title="Next day">▸</button>
+                              <button onClick={() => {
+                                const days = itin.map((d) => ({ items: [...d.items] }));
+                                days[di].items.splice(ii, 1);
+                                setItin(days);
+                              }} title="Remove">✕</button>
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {isOrganizer && (
+                        <button
+                          className="it-add"
+                          onClick={() => {
+                            const days = itin.map((d) => ({ items: [...d.items] }));
+                            days[di].items.push({ id: `n${di}-${days[di].items.length}-${Math.floor(Math.random() * 1e6)}`, t: "New plan…", k: "custom" });
+                            setItin(days);
+                          }}
+                        >
+                          + Add to this day
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <div className="step-actions" style={{ marginTop: 16 }}>
+                    {isOrganizer && (
+                      <button className="btn btn-primary btn-sm" onClick={() => saveItinerary(itin)}>Save itinerary for the group</button>
+                    )}
+                    {isSolo ? (
+                      <a className="btn btn-outline btn-sm" href="/api/stripe/checkout?plan=group">🔒 Print edition: upgrade to Group</a>
+                    ) : (
+                      <button className="btn btn-outline btn-sm" onClick={() => window.print()}>Print / save as PDF</button>
+                    )}
+                  </div>
+                  <p className="bw-note">
+                    Transfers are pre-bookable through our partner; twelve people in a taxi line is how trips start badly.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="bw">
+              <h3>Payments</h3>
+              <p className="bw-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                How does the group want to pay itself off?
+              </p>
+              <div className="tpl-chips" style={{ marginBottom: 8 }}>
+                {([["full", "Pay in full"], ["monthly", "Monthly until the trip"], ["biweekly", "Twice a month"]] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    className={`tpl-chip ${payplan === v ? "on" : ""}`}
+                    disabled={!isOrganizer}
+                    onClick={() => {
+                      if (!isOrganizer) return;
+                      setPayplan(v);
+                      const supabase = supabaseBrowser();
+                      supabase.from("groups").update({ data: { ...(group.data ?? {}), payplan: v } }).eq("id", group.id)
+                        .then(() => { if (group.data) group.data.payplan = v; else group.data = { payplan: v }; });
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="bw-note">
+                {(() => {
+                  const b = budget ?? defaultBudget();
+                  const { label, count } = paymentInstallments();
+                  const per = Math.ceil(budgetTotal(b) / count);
+                  return `${fmt(budgetTotal(b))} per person as ${label}${count > 1 ? ` of ${fmt(per)}` : ""}. The schedule download lists every date, per traveler.`;
+                })()}
+              </p>
+            </div>
             <div className="step-actions" style={{ marginTop: 22 }}>
               {completeBtn(9, done ? "Trip Planned 🎉" : "Generate Final Outputs →", true, "Trip complete! 🎉 Every output is ready whenever you need it.")}
               <button className="btn btn-outline btn-sm" onClick={() => setModal({
@@ -1605,27 +1918,51 @@ Need a human? gatherwelltravel.com`,
               <button className="btn btn-outline btn-sm" onClick={() => {
                 const b = budget ?? defaultBudget();
                 const total = budgetTotal(b);
-                const dep = Math.round(total * 0.25);
-                const bal = total - dep;
-                const rows2 = members.map((m) => {
+                const parties = members.map((m) => {
                   const seats = seatsOf(m);
                   let who = m.meta?.answering_for === "couple" && m.meta?.partner_name ? `${m.name} & ${m.meta.partner_name}` : m.name;
                   if ((m.meta?.kids ?? 0) > 0) who += ` (+${m.meta!.kids} kid${m.meta!.kids! > 1 ? "s" : ""})`;
-                  return { who, dep: dep * seats, bal: bal * seats };
+                  return { who, seats };
                 });
-                setModal({
-                  title: "Payment Schedule",
-                  fname: "Payment-Schedule.csv",
-                  body:
+                const { count } = paymentInstallments();
+                if (count > 1) {
+                  const dates = installmentDates(count);
+                  const per = Math.ceil(total / count);
+                  const bodyRows = parties.map((p) => `${p.who} · ${fmt(per * p.seats)} × ${count} payments`).join("\n");
+                  const csvRows = parties.flatMap((p) =>
+                    dates.map((dt, i) => `"${p.who}","Payment ${i + 1} of ${count}","${dt}","${fmt(per * p.seats)}"`)
+                  ).join("\n");
+                  setModal({
+                    title: "Payment Schedule",
+                    fname: "Payment-Schedule.csv",
+                    body:
+`PAYMENT SCHEDULE · ${group.name}
+Per person: ${fmt(total)} · Group total: ${fmt(total * headcount)}
+Plan: ${count} payments of ${fmt(per)} per person, first due ${dates[0]}
+
+${bodyRows}
+
+The downloaded file lists every payment date for every traveler.`,
+                    fdata:
+`Traveler,Payment,Due date,Amount\n` + csvRows,
+                  });
+                } else {
+                  const dep = Math.round(total * 0.25);
+                  const bal = total - dep;
+                  setModal({
+                    title: "Payment Schedule",
+                    fname: "Payment-Schedule.csv",
+                    body:
 `PAYMENT SCHEDULE · ${group.name}
 Per person: ${fmt(total)} · Group total: ${fmt(total * headcount)}
 
 ${"Traveler".padEnd(24)}${"Deposit (25%)".padEnd(16)}${"Balance".padEnd(11)}Balance Due
-${rows2.map((r) => r.who.padEnd(24) + fmt(r.dep).padEnd(16) + fmt(r.bal).padEnd(11) + "60 days before departure").join("\n")}`,
-                  fdata:
+${parties.map((p) => p.who.padEnd(24) + fmt(dep * p.seats).padEnd(16) + fmt(bal * p.seats).padEnd(11) + "60 days before departure").join("\n")}`,
+                    fdata:
 `Traveler,Deposit (25%),Balance,Balance Due\n` +
-rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before departure"`).join("\n"),
-                });
+parties.map((p) => `"${p.who}","${fmt(dep * p.seats)}","${fmt(bal * p.seats)}","60 days before departure"`).join("\n"),
+                  });
+                }
               }}>Payment schedule</button>
             </div>
             {done && (
@@ -1881,6 +2218,34 @@ rows2.map((r) => `"${r.who}","${fmt(r.dep)}","${fmt(r.bal)}","60 days before dep
       )}
 
       <div className={`toast ${toast ? "show" : ""}`}>{toast}</div>
+
+      {/* Printed itinerary: the keepsake. Hidden on screen, becomes the document when printing. */}
+      {itin && (
+        <div className="print-doc">
+          <div className="pd-brand">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/groups-logo.png" alt="Groups by Gatherwell" style={{ width: 170 }} />
+          </div>
+          <h1 className="pd-title">{group.name}</h1>
+          <div className="pd-meta">
+            {group.data?.destination ? `${group.data.destination} · ` : ""}
+            {tripDates() ? `${tripDates()!.start.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · ${tripDates()!.nights} nights · ` : ""}
+            {headcount} travelers · {fmt(budgetTotal(budget ?? defaultBudget()))} per person
+          </div>
+          {itin.map((day, di) => (
+            <div key={di} className="pd-day">
+              <div className="pd-day-head">{dayLabel(di)}</div>
+              {day.items.map((item) => (
+                <div key={item.id} className="pd-item">{item.t}</div>
+              ))}
+            </div>
+          ))}
+          <div className="pd-foot">
+            Planned together on Groups by Gatherwell · A Gatherwell Travel Company<br />
+            hello@gatherwelltravel.com · (888) 664-3090 · www.groupsbygatherwell.com
+          </div>
+        </div>
+      )}
     </div>
   );
 }
