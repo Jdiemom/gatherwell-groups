@@ -24,12 +24,23 @@ export const CONTACT_EMAIL = "hello@gatherwelltravel.com";
 export const CONTACT_PHONE = "(888) 664-3090";
 export const CONTACT_PHONE_HREF = "+18886643090";
 
-/** Kept in one place so the Terms and the pricing section can never drift apart. */
+/** Kept in one place so the Terms and the pricing section can never drift apart.
+ *  `amount` is the same number, written so search engines can read it. */
 export const PLAN_PRICES = [
-  { name: "Solo Organizer", price: "$19 USD per month" },
-  { name: "Group", price: "$29 USD per month" },
-  { name: "Concierge", price: "$79 USD per month" },
+  { name: "Solo Organizer", price: "$19 USD per month", amount: 19 },
+  { name: "Group", price: "$29 USD per month", amount: 29 },
+  { name: "Concierge", price: "$79 USD per month", amount: 79 },
 ];
+
+/** The same address as MAILING_ADDRESS, split into parts search engines understand.
+ *  If you change one, change the other. */
+export const ADDRESS_PARTS = {
+  street: "8877 N Gainey Center Drive",
+  city: "Scottsdale",
+  region: "AZ",
+  postalCode: "85258",
+  country: "US",
+};
 
 /** Named in the Privacy Policy as the companies that handle data on our behalf. */
 export const PROCESSORS = [

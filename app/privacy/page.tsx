@@ -9,9 +9,10 @@ import {
 } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy · Groups by Gatherwell",
+  title: "Privacy Policy",
   description:
     "What Groups by Gatherwell collects, why, who sees it, and how to get it deleted.",
+  alternates: { canonical: "/privacy" },
 };
 
 export default function PrivacyPage() {

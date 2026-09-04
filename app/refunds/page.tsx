@@ -3,9 +3,10 @@ import LegalShell from "@/app/components/LegalShell";
 import { CONTACT_EMAIL, CONTACT_PHONE, LEGAL_NAME, PRODUCT_NAME } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "Cancellations & Refunds · Groups by Gatherwell",
+  title: "Cancellations & Refunds",
   description:
     "How to cancel a Groups by Gatherwell membership, what happens to the rest of the month, and when we refund.",
+  alternates: { canonical: "/refunds" },
 };
 
 export default function RefundsPage() {

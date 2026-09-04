@@ -13,9 +13,10 @@ import {
 } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "Terms of Service · Groups by Gatherwell",
+  title: "Terms of Service",
   description:
     "The agreement between you and Gatherwell Travel when you use Groups by Gatherwell to plan a group trip.",
+  alternates: { canonical: "/terms" },
 };
 
 export default function TermsPage() {

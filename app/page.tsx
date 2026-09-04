@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import Calculator from "./components/Calculator";
 import SiteFooter from "./components/SiteFooter";
 import Waitlist from "./components/Waitlist";
+import { homepageSchema } from "@/lib/schema";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 /* Hand-drawn-feel line icons, 1.4px stroke, brand gold */
 const Icons = {
@@ -93,6 +99,11 @@ const PLANS = [
 export default function Home() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(homepageSchema()) }}
+      />
+
       <nav className="nav">
         <div className="nav-inner">
           <a className="logo" href="#top">
