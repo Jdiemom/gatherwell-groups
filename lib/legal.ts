@@ -11,7 +11,7 @@ export const LEGAL_NAME = "Gatherwell Travel LLC";
 export const GOVERNING_LAW = "the State of Arizona";
 
 /** A real postal address. Stripe and most email rules expect one. Leave "" to hide the line. */
-export const MAILING_ADDRESS = "";
+export const MAILING_ADDRESS = "8877 N Gainey Center Drive, Scottsdale, AZ 85258";
 
 /** Bump this whenever you change the wording of any policy. */
 export const EFFECTIVE_DATE = "September 4, 2026";
