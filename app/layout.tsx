@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, DM_Sans } from "next/font/google";
 import "./globals.css";
+import FeedbackWidget from "./components/FeedbackWidget";
 
 const serif = Fraunces({
   variable: "--font-serif",
@@ -33,7 +34,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${serif.variable} ${sans.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <FeedbackWidget />
+      </body>
     </html>
   );
 }
