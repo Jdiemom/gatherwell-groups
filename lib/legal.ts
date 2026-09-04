@@ -6,11 +6,9 @@
 
 /* ---------------- CONFIRM BEFORE LIVE ---------------- */
 
-/** The legal name that appears on your Stripe account and your business registration. */
-export const LEGAL_NAME = "Gatherwell Travel";
+export const LEGAL_NAME = "Gatherwell Travel LLC";
 
-/** Where a dispute would be heard. Set to the province or state your business is registered in. */
-export const GOVERNING_LAW = "the Province of Alberta, Canada";
+export const GOVERNING_LAW = "the State of Arizona";
 
 /** A real postal address. Stripe and most email rules expect one. Leave "" to hide the line. */
 export const MAILING_ADDRESS = "";
