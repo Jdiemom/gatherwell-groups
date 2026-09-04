@@ -390,3 +390,10 @@ footer p{line-height:2}
 .fb-count{font-size:12.5px;color:var(--ink-soft);text-align:right;margin-top:6px}
 .fb-done{border-left:2px solid var(--sage-deep);background:#F3F5EF;padding:22px 26px;font-size:16px;line-height:1.7}
 .fb-err{border-left:2px solid var(--terracotta);background:#FBF1E8;padding:14px 18px;font-size:15px;margin-top:14px}
+
+/* ---------- "why not one of the free apps" band ---------- */
+.diff-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:56px;text-align:left}
+@media(max-width:900px){.diff-grid{grid-template-columns:1fr}}
+.diff{background:var(--white);padding:34px 30px}
+.diff h3{font-size:20px;line-height:1.25;margin-bottom:12px}
+.diff p{font-size:15.5px;color:var(--ink-soft);line-height:1.7}

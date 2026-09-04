@@ -17,7 +17,7 @@ const sans = DM_Sans({
 });
 
 const DESCRIPTION =
-  "One membership walks your whole group through every trip decision, step by step: dates, budget, flights, stays, and activities. Everyone votes. Nobody chases. From $19 a month, cancel when you're booked.";
+  "The group trip planner built by working travel advisors. Nine guided steps take your group from dates and budget to flights, stays and a final itinerary, with real supplier rates behind every one. From $19 a month.";
 
 export const metadata: Metadata = {
   // Makes every relative URL below resolve to the www domain, and stops

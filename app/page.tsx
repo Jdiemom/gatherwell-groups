@@ -70,12 +70,28 @@ const STEPS = [
 ];
 
 const FEATURES = [
-  { icon: Icons.ballot, t: "Everyone votes, once", p: "Dates, budget, destination, stays, activities: each decision is a quick poll with a deadline. No 400-message threads." },
-  { icon: Icons.document, t: "Real outputs at every step", p: "Each completed step produces something you keep: a budget spreadsheet, a flight plan, a payment schedule, a final itinerary." },
-  { icon: Icons.plane, t: "Buy flights at the right time", p: "We watch the data on booking windows and tell your group when to buy. Airfare is never a sure thing, and we say so." },
-  { icon: Icons.house, t: "Group-sized stays", p: "Book villas and vacation homes through our Rental Escapes and Luxury Rentals partners." },
-  { icon: Icons.coins, t: "Built-in budget tool", p: "Pairs with the Gatherwell Budgeting app so everyone agrees to the number and sticks to it." },
-  { icon: Icons.hands, t: "Humans on standby", p: "Get stuck? Hand any step, or the whole trip, to the Gatherwell Travel advisory team." },
+  { icon: Icons.hands, t: "A travel agency, not just an app", p: "Every step is backed by working advisors with real supplier relationships. Get stuck, and you can hand any step, or the whole trip, to the Gatherwell Travel team." },
+  { icon: Icons.coins, t: "The budget is a gate, not a note", p: "Your group agrees the per-person number before anyone falls in love with a destination, and every step after that respects it. Budget votes stay anonymous so nobody overcommits to keep up." },
+  { icon: Icons.plane, t: "We tell you when to buy the flights", p: "We watch the data on booking windows and tell your group when to buy. Airfare is never a sure thing, and we say so." },
+  { icon: Icons.house, t: "Rates you cannot get yourself", p: "Villas and group stays through our Rental Escapes and Luxury Rentals partnerships, alongside the destinations we have personally tested." },
+  { icon: Icons.ballot, t: "Everyone votes, once", p: "Dates, budget, destination, stays, activities: each decision is a quick poll with a deadline. No 400-message threads, and no organizer left chasing." },
+  { icon: Icons.document, t: "Real outputs at every step", p: "Each completed step produces something you keep: a budget spreadsheet, a flight plan, a payment schedule, and a printable final itinerary." },
+];
+
+/* The short answer to "why not one of the free planning apps?" */
+const DIFFERENCE = [
+  {
+    t: "Most group planners are software. This one is a travel agency.",
+    p: "The apps you have tried were built by software companies. Groups by Gatherwell was built by advisors who book group travel for a living, which is why there are negotiated supplier rates and real people behind the steps rather than a support inbox.",
+  },
+  {
+    t: "It decides, instead of just collecting opinions.",
+    p: "A shared canvas is where group trips go to die. Each step here unlocks only when the one before it is settled, so the group moves forward instead of circling for six weeks.",
+  },
+  {
+    t: "The money is handled in the open, and it is free.",
+    p: "Our Gatherwell Travel app is a free companion for the part that ruins friendships: shared budgets, pledges, contributions, split expenses and live balances, so one person is never quietly fronting three thousand dollars.",
+  },
 ];
 
 const PLANS = [
@@ -123,16 +139,16 @@ export default function Home() {
 
       <header className="hero hero-photo" id="top">
         <div className="hero-inner">
-          <div className="kicker">A Gatherwell Travel Company</div>
+          <div className="kicker">By the advisors at Gatherwell Travel</div>
           <h1>
             Plan the group trip.
             <br />
             Skip the <em>chaos</em>.
           </h1>
           <p className="sub">
-            One membership walks your group through every decision: dates, budget, flights,
-            stays, and activities. Everyone votes. Nobody chases. You keep the money a big
-            group usually wastes.
+            Nine guided steps take your whole group from idea to itinerary. Everyone votes,
+            nobody chases, and you keep the money big groups usually waste. Behind every step
+            is a working travel agency, not just an app.
           </p>
           <div className="hero-ctas">
             <a className="btn btn-primary" href="#pricing">Start Your Group Trip</a>
@@ -181,6 +197,32 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="savings" id="difference">
+        <div className="wrap center">
+          <div className="eyebrow">Why Not One of the Free Apps</div>
+          <h2 className="sec-title">
+            You have tried the planning apps.
+            <br />
+            <em>This is not one of those.</em>
+          </h2>
+          <div className="diff-grid">
+            {DIFFERENCE.map((d) => (
+              <div key={d.t} className="diff">
+                <h3>{d.t}</h3>
+                <p>{d.p}</p>
+              </div>
+            ))}
+          </div>
+          <p className="foot-note" style={{ maxWidth: 620, margin: "34px auto 0" }}>
+            The Gatherwell Travel app is free on the App Store, with or without a membership.{" "}
+            <a href="https://apps.apple.com/us/app/gatherwell-travel/id6762874183" target="_blank" rel="noopener noreferrer">
+              Download it here
+            </a>
+            .
+          </p>
+        </div>
+      </section>
+
       <Calculator />
 
       <section>
@@ -189,7 +231,7 @@ export default function Home() {
           <h2 className="sec-title">
             More convenient than the group chat.
             <br />
-            <em>Cheaper than an advisor.</em>
+            <em>Better connected than any app.</em>
           </h2>
           <div className="features-grid">
             {FEATURES.map((f) => (

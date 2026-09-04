@@ -64,7 +64,7 @@ export function homepageSchema() {
         operatingSystem: "Web browser",
         provider: { "@id": ORG_ID },
         description:
-          "A guided nine-step method that walks a whole group through every trip decision: dates, budget, destination, flights, stays, activities, itinerary and payments. Everyone votes, and each step produces a document the group keeps.",
+          "A guided nine-step method, built by working travel advisors, that walks a whole group through every trip decision: dates, budget, destination, flights, stays, activities, itinerary and payments. Everyone votes, each step produces a document the group keeps, and the supplier rates and advisory team of a real travel agency sit behind it.",
         featureList: [
           "Date availability polling across the whole group",
           "Anonymous budget voting with tie detection",
