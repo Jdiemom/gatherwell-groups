@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseRoute } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendGroupEmail, sendPersonalEmails, sendAdvisorEmail } from "@/lib/notify";
 import { tripVisionHtml } from "@/lib/synopsis";
@@ -30,7 +30,7 @@ type GroupData = {
 const clean = (s: string) => s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim();
 
 export async function POST(request: NextRequest) {
-  const supabase = await supabaseServer();
+  const supabase = await supabaseRoute(request);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseRoute } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendAdvisorEmail } from "@/lib/notify";
 
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   let userEmail: string | null = null;
   let userName: string | null = null;
   try {
-    const supabase = await supabaseServer();
+    const supabase = await supabaseRoute(request);
     const {
       data: { user },
     } = await supabase.auth.getUser();

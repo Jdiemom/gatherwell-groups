@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseRoute } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendGroupEmail } from "@/lib/notify";
 import { STEPS } from "@/lib/steps";
 
 /** Organizer opened or reopened a step → email the group (only when there's something to do). */
 export async function POST(request: NextRequest) {
-  const supabase = await supabaseServer();
+  const supabase = await supabaseRoute(request);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 

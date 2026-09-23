@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseRoute } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendAdvisorEmail } from "@/lib/notify";
 
@@ -7,7 +7,7 @@ const fmt = (x: number) => "$" + Math.round(x).toLocaleString("en-US");
 
 /** Organizer asks Gatherwell to pull villa/cruise options. Arrives with the group's full context. */
 export async function POST(request: NextRequest) {
-  const supabase = await supabaseServer();
+  const supabase = await supabaseRoute(request);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 

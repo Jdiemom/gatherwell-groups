@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseRoute } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendAdvisorEmail } from "@/lib/notify";
 import { STEPS } from "@/lib/steps";
 
 /** Concierge-tier member asks their advisor a question → high-priority email to Gatherwell with full context. */
 export async function POST(request: NextRequest) {
-  const supabase = await supabaseServer();
+  const supabase = await supabaseRoute(request);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
